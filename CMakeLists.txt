@@ -91,26 +91,26 @@ endif()
 juce_add_plugin(
   AudioPlugin
   COMPANY_NAME
-  "MyCompany" # change this
+  "Ankalot"
   IS_SYNTH
-  FALSE # may change this
+  FALSE
   NEEDS_MIDI_INPUT
-  FALSE # may change this
+  FALSE
   NEEDS_MIDI_OUTPUT
-  FALSE # may change this
+  FALSE
   PLUGIN_MANUFACTURER_CODE
-  Mcmp # change this (for max compatibility, first letter must be uppercase, remaining lowercase)
+  Ankt
   PLUGIN_CODE
-  Expl # change this (for max compatibility, first letter must be uppercase, remaining lowercase)
+  Tpsh
   FORMATS
   AAX
   AU
   Standalone
   VST3
   PRODUCT_NAME
-  "YourPluginName" # change this
+  "Topological Shaper" # change this
   VERSION
-  0.0.0 # 0.0.0 forces AU host to always rescan the plugin. Change this before releasing
+  0.0.1
   COPY_PLUGIN_AFTER_BUILD
   FALSE # Changing this to TRUE will enable automatic copying of the built plugin formats
         # to correct directories on your system. The directories must exist, though
