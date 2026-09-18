@@ -68,14 +68,49 @@ void PluginProcessor::changeProgramName(int index,
 }
 
 void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
-  // Use this method as the place to do any pre-playback
-  // initialisation that you need..
   juce::ignoreUnused(sampleRate, samplesPerBlock);
+
+  // Build periodic Hann window (sums to constant with 50% overlap)
+  hannWindow.resize(kWindowSize);
+  for (int i = 0; i < kWindowSize; ++i) {
+    hannWindow[i] =
+        0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * i /
+                                kWindowSize));
+  }
+
+  // Pre-allocate temporary buffer for a processed window
+  processedWindow.assign(kWindowSize, 0.0f);
+
+  // Clear and reserve per-channel buffers to avoid allocations in processBlock
+  for (int ch = 0; ch < kMaxChannels; ++ch) {
+    inputBuffer[ch].clear();
+    outputBuffer[ch].clear();
+    weightBuffer[ch].clear();
+    inputBuffer[ch].reserve(kWindowSize * 2);
+    outputBuffer[ch].reserve(kWindowSize * 2);
+    weightBuffer[ch].reserve(kWindowSize * 2);
+  }
+
+  outHeadPos = -kWindowSize;
+  windowsProcessed = 0;
+
+  // Report latency so the host compensates for the windowing delay
+  setLatencySamples(kWindowSize);
 }
 
 void PluginProcessor::releaseResources() {
-  // When playback stops, you can use this as an opportunity to free up any
-  // spare memory, etc.
+  for (int ch = 0; ch < kMaxChannels; ++ch) {
+    inputBuffer[ch].clear();
+    outputBuffer[ch].clear();
+    weightBuffer[ch].clear();
+    inputBuffer[ch].shrink_to_fit();
+    outputBuffer[ch].shrink_to_fit();
+    weightBuffer[ch].shrink_to_fit();
+  }
+  processedWindow.clear();
+  hannWindow.clear();
+  outHeadPos = -kWindowSize;
+  windowsProcessed = 0;
 }
 
 bool PluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
@@ -101,38 +136,94 @@ bool PluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
 #endif
 }
 
+void PluginProcessor::processWindow(const float* input, float* output) {
+  // Passthrough stub. Will be replaced with the topological deformation
+  // algorithm.
+  std::copy(input, input + kWindowSize, output);
+}
+
 void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                    juce::MidiBuffer& midiMessages) {
   juce::ignoreUnused(midiMessages);
-
   juce::ScopedNoDenormals noDenormals;
-  auto totalNumInputChannels = getTotalNumInputChannels();
-  auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-  // In case we have more outputs than inputs, this code clears any output
-  // channels that didn't contain input data, (because these aren't
-  // guaranteed to be empty - they may contain garbage).
-  // This is here to avoid people getting screaming feedback
-  // when they first compile a plugin, but obviously you don't need to keep
-  // this code if your algorithm always overwrites all the output channels.
-  for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-    buffer.clear(i, 0, buffer.getNumSamples());
+  const int numChannels = std::min(getTotalNumInputChannels(), kMaxChannels);
+  const int numSamples = buffer.getNumSamples();
 
-  // This is the place where you'd normally do the guts of your plugin's
-  // audio processing...
-  // Make sure to reset the state if your inner loop is processing
-  // the samples and the outer loop is handling the channels.
-  // Alternatively, you can process the samples with the channels
-  // interleaved by keeping the same state.
-  for (int channel = 0; channel < totalNumInputChannels; ++channel) {
-    auto* channelData = buffer.getWritePointer(channel);
-    juce::ignoreUnused(channelData);
-    // ..do something to the data...
+  // Step 1: append incoming samples into per-channel input buffers
+  for (int ch = 0; ch < numChannels; ++ch) {
+    const float* in = buffer.getReadPointer(ch);
+    inputBuffer[ch].insert(inputBuffer[ch].end(), in, in + numSamples);
   }
+
+  // Step 2: process as many full windows as possible, stepping by hopSize.
+  // Each window n covers absolute output range [n * kHopSize, n * kHopSize +
+  // kWindowSize), so it must be overlap-added at offset (n * kHopSize -
+  // outHeadPos), NOT at the tail.
+  while (inputBuffer[0].size() >= static_cast<size_t>(kWindowSize)) {
+    const juce::int64 writeOffset = windowsProcessed * kHopSize - outHeadPos;
+
+    for (int ch = 0; ch < numChannels; ++ch) {
+      // Process this window
+      processWindow(inputBuffer[ch].data(), processedWindow.data());
+
+      // Make room so the window fits at writeOffset
+      const size_t required = static_cast<size_t>(writeOffset) + kWindowSize;
+      if (outputBuffer[ch].size() < required) {
+        outputBuffer[ch].resize(required, 0.0f);
+        weightBuffer[ch].resize(required, 0.0f);
+      }
+
+      // Overlap-add the Hann-weighted processed window at the correct position
+      for (int i = 0; i < kWindowSize; ++i) {
+        outputBuffer[ch][static_cast<size_t>(writeOffset) + i] +=
+            processedWindow[i] * hannWindow[i];
+        weightBuffer[ch][static_cast<size_t>(writeOffset) + i] += hannWindow[i];
+      }
+    }
+
+    ++windowsProcessed;
+
+    // Shift input buffers forward by hopSize
+    for (int ch = 0; ch < numChannels; ++ch) {
+      inputBuffer[ch].erase(inputBuffer[ch].begin(),
+                            inputBuffer[ch].begin() + kHopSize);
+    }
+  }
+
+  // Step 3: pull numSamples out of the output buffers, normalising by weights
+  for (int ch = 0; ch < numChannels; ++ch) {
+    float* out = buffer.getWritePointer(ch);
+    const int toOutput =
+        std::min(numSamples, static_cast<int>(outputBuffer[ch].size()));
+
+    for (int i = 0; i < toOutput; ++i) {
+      const float w = weightBuffer[ch][i];
+      out[i] = (w > 1e-8f) ? outputBuffer[ch][i] / w : 0.0f;
+    }
+    // Fallback silence for the initial fill-up period (before first window is
+    // ready)
+    for (int i = toOutput; i < numSamples; ++i) {
+      out[i] = 0.0f;
+    }
+
+    // Shift output/weight buffers forward and advance the head position
+    if (toOutput > 0) {
+      outputBuffer[ch].erase(outputBuffer[ch].begin(),
+                             outputBuffer[ch].begin() + toOutput);
+      weightBuffer[ch].erase(weightBuffer[ch].begin(),
+                             weightBuffer[ch].begin() + toOutput);
+    }
+  }
+  outHeadPos += numSamples;
+
+  // Clear extra output channels (in case of mono->stereo etc.)
+  for (int ch = numChannels; ch < getTotalNumOutputChannels(); ++ch)
+    buffer.clear(ch, 0, numSamples);
 }
 
 bool PluginProcessor::hasEditor() const {
-  return true;  // (change this to false if you choose to not supply an editor)
+  return true;
 }
 
 juce::AudioProcessorEditor* PluginProcessor::createEditor() {
