@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <vector>
 
 namespace audio_plugin {
@@ -39,25 +40,43 @@ private:
   static constexpr int kHopSize = 1024;
   static constexpr int kMaxChannels = 2;
 
-  // Process a single window: input and output pointers are kWindowSize long.
-  void processWindow(const float* input, float* output);
+  // DSP constants (become APVTS parameters later)
+  static constexpr float kThreshold =
+      0.05f;  // persistence threshold, normalised units
+  static constexpr float kDrive = 0.0f;  // deformation depth: 0 = passthrough
+  static constexpr float kDeformPower = 2.5f;  // power-curve exponent
 
-  // Per-channel circular buffers
+  void findExtrema(const float* window);
+  int findRoot(int i);
+
+  // Seam of the current zone: first kept extremum in [kHopSize, kWindowSize],
+  // fallback kWindowSize.
+  int findZoneEnd();
+
+  // Deform zone [zoneStart, zoneEnd) using anchors = forced seams + kept
+  // extrema inside the zone. Anchor values are fixed. Writes zoneEnd -
+  // zoneStart samples into out.
+  void processZone(const float* window, int zoneStart, int zoneEnd, float* out);
+  void deformSection(const float* window,
+                     int a,
+                     int b,
+                     float* out,
+                     int outOffset);
+
+  // Per-channel input accumulation and output FIFO. The FIFO is prefilled
+  // with kWindowSize zeros: that silence IS the reported latency, so the
+  // first zone sample lands exactly at raw position kWindowSize.
   std::vector<float> inputBuffer[kMaxChannels];
   std::vector<float> outputBuffer[kMaxChannels];
-  std::vector<float> weightBuffer[kMaxChannels];
 
-  // Hann window (periodic, suitable for overlap-add)
-  std::vector<float> hannWindow;
+  // Per-channel zone start index inside the current window, in [0, kHopSize]
+  int prevZoneEnd[kMaxChannels] = {0, 0};
 
-  // Temp buffer for one processed window
-  std::vector<float> processedWindow;
-
-  // Absolute sample index of outputBuffer[0] (same for all channels)
-  juce::int64 outHeadPos = -kWindowSize;
-  
-  // Number of windows processed so far (window n starts at n * kHopSize)
-  juce::int64 windowsProcessed = 0;
+  // Reusable analysis state in window (preallocated)
+  std::vector<int> extrema_;     // size = number of extrema in window
+  std::vector<int> order_;       // size = kWindowSize
+  std::vector<int> parent_;      // size = kWindowSize
+  std::vector<uint8_t> active_;  // size = kWindowSize
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginProcessor)
 };

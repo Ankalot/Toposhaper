@@ -68,49 +68,43 @@ void PluginProcessor::changeProgramName(int index,
 }
 
 void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
-  juce::ignoreUnused(sampleRate, samplesPerBlock);
+  juce::ignoreUnused(sampleRate);
 
-  // Build periodic Hann window (sums to constant with 50% overlap)
-  hannWindow.resize(kWindowSize);
-  for (int i = 0; i < kWindowSize; ++i) {
-    hannWindow[i] =
-        0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * i /
-                                kWindowSize));
-  }
-
-  // Pre-allocate temporary buffer for a processed window
-  processedWindow.assign(kWindowSize, 0.0f);
-
-  // Clear and reserve per-channel buffers to avoid allocations in processBlock
   for (int ch = 0; ch < kMaxChannels; ++ch) {
     inputBuffer[ch].clear();
-    outputBuffer[ch].clear();
-    weightBuffer[ch].clear();
-    inputBuffer[ch].reserve(kWindowSize * 2);
-    outputBuffer[ch].reserve(kWindowSize * 2);
-    weightBuffer[ch].reserve(kWindowSize * 2);
+    inputBuffer[ch].reserve(static_cast<size_t>(kWindowSize) +
+                            static_cast<size_t>(samplesPerBlock));
+
+    // Prefill the output FIFO with silence (it is the reported latency)
+    outputBuffer[ch].assign(static_cast<size_t>(kWindowSize), 0.0f);
+    outputBuffer[ch].reserve(static_cast<size_t>(2 * kWindowSize) +
+                             static_cast<size_t>(samplesPerBlock));
+
+    prevZoneEnd[ch] = 0;
   }
 
-  outHeadPos = -kWindowSize;
-  windowsProcessed = 0;
+  // Preallocate analysis scratch buffers once
+  extrema_.clear();
+  extrema_.reserve(static_cast<size_t>(kWindowSize));
+  order_.resize(kWindowSize);
+  parent_.resize(kWindowSize);
+  active_.resize(kWindowSize);
 
-  // Report latency so the host compensates for the windowing delay
   setLatencySamples(kWindowSize);
 }
 
 void PluginProcessor::releaseResources() {
   for (int ch = 0; ch < kMaxChannels; ++ch) {
     inputBuffer[ch].clear();
-    outputBuffer[ch].clear();
-    weightBuffer[ch].clear();
     inputBuffer[ch].shrink_to_fit();
+    outputBuffer[ch].clear();
     outputBuffer[ch].shrink_to_fit();
-    weightBuffer[ch].shrink_to_fit();
+    prevZoneEnd[ch] = 0;
   }
-  processedWindow.clear();
-  hannWindow.clear();
-  outHeadPos = -kWindowSize;
-  windowsProcessed = 0;
+  extrema_.clear();
+  order_.clear();
+  parent_.clear();
+  active_.clear();
 }
 
 bool PluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
@@ -136,10 +130,147 @@ bool PluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
 #endif
 }
 
-void PluginProcessor::processWindow(const float* input, float* output) {
-  // Passthrough stub. Will be replaced with the topological deformation
-  // algorithm.
-  std::copy(input, input + kWindowSize, output);
+int PluginProcessor::findRoot(int i) {
+  // Iterative find with path halving
+  while (parent_[i] != i) {
+    parent_[i] = parent_[parent_[i]];
+    i = parent_[i];
+  }
+  return i;
+}
+
+void PluginProcessor::findExtrema(const float* window) {
+  extrema_.clear();
+
+  // Window range used to normalise persistence
+  float mn = window[0], mx = window[0];
+  for (int i = 1; i < kWindowSize; ++i) {
+    mn = std::min(mn, window[i]);
+    mx = std::max(mx, window[i]);
+  }
+  const float range = mx - mn;
+  if (range < 1e-9f)
+    return;  // silence / DC: nothing to keep
+
+  // Sweep sample indices by ascending value (ties by index -> deterministic).
+  // Union-find flooding: components are born at minima and die at maxima.
+  for (int i = 0; i < kWindowSize; ++i)
+    order_[i] = i;
+  std::sort(order_.begin(), order_.end(), [window](int p, int q) {
+    if (window[p] != window[q])
+      return window[p] < window[q];
+    return p < q;
+  });
+
+  std::fill(active_.begin(), active_.end(), 0);
+  const float thresholdAbs = kThreshold * range;
+
+  for (int oi = 0; oi < kWindowSize; ++oi) {
+    const int idx = order_[oi];
+    active_[idx] = 1;
+    parent_[idx] = idx;
+
+    const bool leftActive = idx > 0 && active_[idx - 1];
+    const bool rightActive = idx < kWindowSize - 1 && active_[idx + 1];
+
+    if (!leftActive && !rightActive)
+      continue;  // a new component is born at a local minimum
+
+    if (leftActive && rightActive) {
+      const int rL = findRoot(idx - 1);
+      const int rR = findRoot(idx + 1);
+      int survivor = rL, dying = rR;
+      if (window[survivor] > window[dying])
+        std::swap(survivor, dying);
+      const float persistence = window[idx] - window[dying];
+
+      // A component born at a window edge has its true pairing partner outside
+      // the window, so the measured persistence underestimates the real one.
+      // Treat such pairs as infinitely persistent: keep the maximum.
+      const bool edgeBorn = (dying == 0) || (dying == kWindowSize - 1);
+
+      if (edgeBorn || persistence >= thresholdAbs) {
+        extrema_.push_back(dying);
+        extrema_.push_back(idx);
+      }
+      parent_[dying] = survivor;
+      parent_[idx] = survivor;
+    } else {
+      // One active neighbour: extend that component
+      parent_[idx] = findRoot(leftActive ? idx - 1 : idx + 1);
+    }
+  }
+
+  // The global minimum never dies: infinite persistence, always kept
+  extrema_.push_back(findRoot(0));
+
+  std::sort(extrema_.begin(), extrema_.end());
+
+  // Extrema at the window edges are one-sided and unverifiable: drop them
+  if (!extrema_.empty() && extrema_.front() == 0)
+    extrema_.erase(extrema_.begin());
+  if (!extrema_.empty() && extrema_.back() == kWindowSize - 1)
+    extrema_.pop_back();
+}
+
+int PluginProcessor::findZoneEnd() {
+  // kept is sorted ascending; first kept extremum in the second half
+  for (const int idx : extrema_)
+    if (idx >= kHopSize)
+      return idx;
+  return kWindowSize;  // fallback: the zone runs to the end of the window
+}
+
+void PluginProcessor::deformSection(const float* window,
+                                    int a,
+                                    int b,
+                                    float* out,
+                                    int outOffset) {
+  // Deform samples [a, b) between fixed anchors window[a] and window[b];
+  // results go to out[i - outOffset]. Anchor a itself is copied unchanged.
+  const float va = window[a];
+  const float vb = window[b];
+  out[a - outOffset] = va;
+  if (b - a <= 1)
+    return;
+
+  const float span = vb - va;
+  if (std::abs(span) < 1e-12f) {
+    for (int i = a + 1; i < b; ++i)
+      out[i - outOffset] = va;
+    return;
+  }
+
+  for (int i = a + 1; i < b; ++i) {
+    float t = (window[i] - va) / span;
+    // Clipping! Theoretically this will never clip because of topology.
+    t = juce::jlimit(0.0f, 1.0f, t);
+    const float shaped = std::pow(t, kDeformPower);
+    const float mixed = (1.0f - kDrive) * t + kDrive * shaped;
+    out[i - outOffset] = va + mixed * span;
+  }
+}
+
+void PluginProcessor::processZone(const float* window,
+                                  int zoneStart,
+                                  int zoneEnd,
+                                  float* out) {
+  const int end = (zoneEnd < kWindowSize) ? zoneEnd : kWindowSize - 1;
+
+  int anchor = zoneStart;
+  for (const int idx : extrema_) {
+    if (idx <= zoneStart)
+      continue;
+    if (idx >= end)
+      break;
+    deformSection(window, anchor, idx, out, zoneStart);
+    anchor = idx;
+  }
+  deformSection(window, anchor, end, out, zoneStart);
+
+  // Fallback seam: the zone's very last sample is kept as-is
+  if (zoneEnd == kWindowSize)
+    out[kWindowSize - 1 - zoneStart] = window[kWindowSize - 1];
 }
 
 void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
@@ -156,66 +287,53 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     inputBuffer[ch].insert(inputBuffer[ch].end(), in, in + numSamples);
   }
 
-  // Step 2: process as many full windows as possible, stepping by hopSize.
-  // Each window n covers absolute output range [n * kHopSize, n * kHopSize +
-  // kWindowSize), so it must be overlap-added at offset (n * kHopSize -
-  // outHeadPos), NOT at the tail.
+  // Step 2: while a full analysis window is available, run ONE analysis pass
+  // per channel, cut the next zone with it and append the processed content
+  // to that channel's output FIFO. Zones tile the stream contiguously per
+  // channel
   while (inputBuffer[0].size() >= static_cast<size_t>(kWindowSize)) {
-    const juce::int64 writeOffset = windowsProcessed * kHopSize - outHeadPos;
-
     for (int ch = 0; ch < numChannels; ++ch) {
-      // Process this window
-      processWindow(inputBuffer[ch].data(), processedWindow.data());
+      findExtrema(inputBuffer[ch].data());
 
-      // Make room so the window fits at writeOffset
-      const size_t required = static_cast<size_t>(writeOffset) + kWindowSize;
-      if (outputBuffer[ch].size() < required) {
-        outputBuffer[ch].resize(required, 0.0f);
-        weightBuffer[ch].resize(required, 0.0f);
+      const int zoneEnd = findZoneEnd();
+      const int zoneStart = prevZoneEnd[ch];    // in [0, kHopSize]
+      const int zoneLen = zoneEnd - zoneStart;  // in [0, kWindowSize]
+
+      if (zoneLen > 0) {
+        const size_t oldSize = outputBuffer[ch].size();
+        outputBuffer[ch].resize(oldSize + static_cast<size_t>(zoneLen));
+        processZone(inputBuffer[ch].data(), zoneStart, zoneEnd,
+                    outputBuffer[ch].data() + oldSize);
       }
 
-      // Overlap-add the Hann-weighted processed window at the correct position
-      for (int i = 0; i < kWindowSize; ++i) {
-        outputBuffer[ch][static_cast<size_t>(writeOffset) + i] +=
-            processedWindow[i] * hannWindow[i];
-        weightBuffer[ch][static_cast<size_t>(writeOffset) + i] += hannWindow[i];
-      }
+      prevZoneEnd[ch] = zoneEnd - kHopSize;
     }
 
-    ++windowsProcessed;
-
-    // Shift input buffers forward by hopSize
+    // Shift input buffers forward: next analysis window starts kHopSize later
     for (int ch = 0; ch < numChannels; ++ch) {
       inputBuffer[ch].erase(inputBuffer[ch].begin(),
                             inputBuffer[ch].begin() + kHopSize);
     }
   }
 
-  // Step 3: pull numSamples out of the output buffers, normalising by weights
+  // Step 3: pull numSamples from the head of each output FIFO
   for (int ch = 0; ch < numChannels; ++ch) {
     float* out = buffer.getWritePointer(ch);
     const int toOutput =
         std::min(numSamples, static_cast<int>(outputBuffer[ch].size()));
 
-    for (int i = 0; i < toOutput; ++i) {
-      const float w = weightBuffer[ch][i];
-      out[i] = (w > 1e-8f) ? outputBuffer[ch][i] / w : 0.0f;
-    }
-    // Fallback silence for the initial fill-up period (before first window is
-    // ready)
-    for (int i = toOutput; i < numSamples; ++i) {
-      out[i] = 0.0f;
-    }
+    for (int i = 0; i < toOutput; ++i)
+      out[i] = outputBuffer[ch][static_cast<size_t>(i)];
 
-    // Shift output/weight buffers forward and advance the head position
-    if (toOutput > 0) {
+    // Unreachable in practice (FIFO size before emit is provably
+    // >= numSamples + 1); kept so the output buffer is always fully written
+    for (int i = toOutput; i < numSamples; ++i)
+      out[i] = 0.0f;
+
+    if (toOutput > 0)
       outputBuffer[ch].erase(outputBuffer[ch].begin(),
                              outputBuffer[ch].begin() + toOutput);
-      weightBuffer[ch].erase(weightBuffer[ch].begin(),
-                             weightBuffer[ch].begin() + toOutput);
-    }
   }
-  outHeadPos += numSamples;
 
   // Clear extra output channels (in case of mono->stereo etc.)
   for (int ch = numChannels; ch < getTotalNumOutputChannels(); ++ch)
