@@ -162,7 +162,7 @@ void PluginProcessor::findExtrema(const float* window) {
     return p < q;
   });
 
-  std::fill(active_.begin(), active_.end(), 0);
+  std::fill(active_.begin(), active_.end(), static_cast<uint8_t>(0));
   const float thresholdAbs = kThreshold * range;
 
   for (int oi = 0; oi < kWindowSize; ++oi) {
@@ -218,7 +218,7 @@ int PluginProcessor::findZoneEnd() {
   for (const int idx : extrema_)
     if (idx >= kHopSize)
       return idx;
-  return kWindowSize;  // fallback: the zone runs to the end of the window
+  return kWindowSize - 1;  // fallback: the zone runs to the end of the window
 }
 
 void PluginProcessor::deformSection(const float* window,
@@ -255,22 +255,16 @@ void PluginProcessor::processZone(const float* window,
                                   int zoneStart,
                                   int zoneEnd,
                                   float* out) {
-  const int end = (zoneEnd < kWindowSize) ? zoneEnd : kWindowSize - 1;
-
   int anchor = zoneStart;
   for (const int idx : extrema_) {
     if (idx <= zoneStart)
       continue;
-    if (idx >= end)
+    if (idx >= zoneEnd)
       break;
     deformSection(window, anchor, idx, out, zoneStart);
     anchor = idx;
   }
-  deformSection(window, anchor, end, out, zoneStart);
-
-  // Fallback seam: the zone's very last sample is kept as-is
-  if (zoneEnd == kWindowSize)
-    out[kWindowSize - 1 - zoneStart] = window[kWindowSize - 1];
+  deformSection(window, anchor, zoneEnd, out, zoneStart);
 }
 
 void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
@@ -295,16 +289,14 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     for (int ch = 0; ch < numChannels; ++ch) {
       findExtrema(inputBuffer[ch].data());
 
-      const int zoneEnd = findZoneEnd();
-      const int zoneStart = prevZoneEnd[ch];    // in [0, kHopSize]
-      const int zoneLen = zoneEnd - zoneStart;  // in [0, kWindowSize]
+      const int zoneEnd = findZoneEnd();      // in [kHopSize, kWindowSize - 1]
+      const int zoneStart = prevZoneEnd[ch];  // in [0, kHopSize - 1]
+      const int zoneLen = zoneEnd - zoneStart;  // in [1, kWindowSize - 1]
 
-      if (zoneLen > 0) {
-        const size_t oldSize = outputBuffer[ch].size();
-        outputBuffer[ch].resize(oldSize + static_cast<size_t>(zoneLen));
-        processZone(inputBuffer[ch].data(), zoneStart, zoneEnd,
-                    outputBuffer[ch].data() + oldSize);
-      }
+      const size_t oldSize = outputBuffer[ch].size();
+      outputBuffer[ch].resize(oldSize + static_cast<size_t>(zoneLen));
+      processZone(inputBuffer[ch].data(), zoneStart, zoneEnd,
+                  outputBuffer[ch].data() + oldSize);
 
       prevZoneEnd[ch] = zoneEnd - kHopSize;
     }

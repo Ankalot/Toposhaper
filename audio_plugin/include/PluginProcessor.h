@@ -37,7 +37,7 @@ public:
 private:
   // Windowing constants
   static constexpr int kWindowSize = 2048;
-  static constexpr int kHopSize = 1024;
+  static constexpr int kHopSize = kWindowSize / 2;
   static constexpr int kMaxChannels = 2;
 
   // DSP constants (become APVTS parameters later)
@@ -49,8 +49,8 @@ private:
   void findExtrema(const float* window);
   int findRoot(int i);
 
-  // Seam of the current zone: first kept extremum in [kHopSize, kWindowSize],
-  // fallback kWindowSize.
+  // Seam of the current zone: first kept extremum in [kHopSize, kWindowSize -
+  // 1], fallback kWindowSize-1.
   int findZoneEnd();
 
   // Deform zone [zoneStart, zoneEnd) using anchors = forced seams + kept
@@ -69,7 +69,7 @@ private:
   std::vector<float> inputBuffer[kMaxChannels];
   std::vector<float> outputBuffer[kMaxChannels];
 
-  // Per-channel zone start index inside the current window, in [0, kHopSize]
+  // Per-channel zone start index inside current window, in [0, kHopSize - 1]
   int prevZoneEnd[kMaxChannels] = {0, 0};
 
   // Reusable analysis state in window (preallocated)
