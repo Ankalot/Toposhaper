@@ -221,6 +221,27 @@ int PluginProcessor::findZoneEnd() {
   return kWindowSize - 1;  // fallback: the zone runs to the end of the window
 }
 
+// Savitzky-Golay smoothing kernel; symmetric; coefficients sum to 1.
+static constexpr int kSmoothHalf = 7;
+static constexpr int kSmoothLen = 2 * kSmoothHalf + 1;  // = 15 taps
+static constexpr float kSmoothCoeffs[kSmoothLen] = {
+    -78.0f / 1105.0f,  // tap i-7
+    -13.0f / 1105.0f,  // tap i-6
+    42.0f / 1105.0f,   // tap i-5
+    87.0f / 1105.0f,   // tap i-4
+    122.0f / 1105.0f,  // tap i-3
+    147.0f / 1105.0f,  // tap i-2
+    162.0f / 1105.0f,  // tap i-1
+    167.0f / 1105.0f,  // tap i (center)
+    162.0f / 1105.0f,  // tap i+1
+    147.0f / 1105.0f,  // tap i+2
+    122.0f / 1105.0f,  // tap i+3
+    87.0f / 1105.0f,   // tap i+4
+    42.0f / 1105.0f,   // tap i+5
+    -13.0f / 1105.0f,  // tap i+6
+    -78.0f / 1105.0f,  // tap i+7
+};
+
 void PluginProcessor::deformSection(const float* window,
                                     int a,
                                     int b,
@@ -241,8 +262,28 @@ void PluginProcessor::deformSection(const float* window,
     return;
   }
 
+  // Optional Savitzky-Golay pre-smoothing of the section interior. Anchors
+  // stay raw so seams remain click-free; padding reflects the section around
+  // its anchors (zero slope at the anchor, no leakage across seams).
+  // Sections shorter than the kernel span are left raw.
+  const bool smooth = kSmoothMix > 0.0f && (b - a) >= 2 * kSmoothHalf;
+  const auto tapped = [window, a, b](int j) {
+    if (j < a)
+      j = 2 * a - j;  // reflect around the left anchor
+    else if (j > b)
+      j = 2 * b - j;  // reflect around the right anchor
+    return window[j];
+  };
+
   for (int i = a + 1; i < b; ++i) {
-    float t = (window[i] - va) / span;
+    float x = window[i];
+    if (smooth) {
+      float acc = 0.0f;
+      for (int k = -kSmoothHalf; k <= kSmoothHalf; ++k)
+        acc += kSmoothCoeffs[k + kSmoothHalf] * tapped(i + k);
+      x += kSmoothMix * (acc - x);  // lerp(raw, smoothed, mix)
+    }
+    float t = (x - va) / span;
     // Clipping! Theoretically this will never clip because of topology.
     t = juce::jlimit(0.0f, 1.0f, t);
     const float shaped = std::pow(t, kDeformPower);

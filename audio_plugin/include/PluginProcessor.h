@@ -45,6 +45,7 @@ private:
       0.05f;  // persistence threshold, normalised units
   static constexpr float kDrive = 0.0f;  // deformation depth: 0 = passthrough
   static constexpr float kDeformPower = 2.5f;  // power-curve exponent
+  static constexpr float kSmoothMix = 1.0f;    // pre-smoothing mix
 
   void findExtrema(const float* window);
   int findRoot(int i);
