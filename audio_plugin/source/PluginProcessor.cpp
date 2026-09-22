@@ -8,7 +8,29 @@ PluginProcessor::PluginProcessor()
 #endif
               .withOutput("Output", juce::AudioChannelSet::stereo(), true)
 #endif
-      ) {
+              ),
+      apvts(*this,
+            nullptr,
+            juce::Identifier("TopologicalShaper"),
+            createParameterLayout()) {
+  thresholdPtr = apvts.getRawParameterValue("threshold");
+  drivePtr = apvts.getRawParameterValue("drive");
+  deformPowerPtr = apvts.getRawParameterValue("deform_power");
+  smoothMixPtr = apvts.getRawParameterValue("smooth_mix");
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout
+PluginProcessor::createParameterLayout() {
+  juce::AudioProcessorValueTreeState::ParameterLayout layout;
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"threshold", 1}, "Threshold", 0.0f, 1.0f, 0.05f));
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"drive", 1}, "Drive", 0.0f, 1.0f, 1.0f));
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"deform_power", 1}, "Deform Power", 0.1f, 10.0f, 2.0f));
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"smooth_mix", 1}, "Smooth Mix", 0.0f, 1.0f, 0.5f));
+  return layout;
 }
 
 const juce::String PluginProcessor::getName() const {
@@ -163,7 +185,7 @@ void PluginProcessor::findExtrema(const float* window) {
   });
 
   std::fill(active_.begin(), active_.end(), static_cast<uint8_t>(0));
-  const float thresholdAbs = kThreshold * range;
+  const float thresholdAbs = thresholdPtr->load() * range;
 
   for (int oi = 0; oi < kWindowSize; ++oi) {
     const int idx = order_[oi];
@@ -262,11 +284,15 @@ void PluginProcessor::deformSection(const float* window,
     return;
   }
 
+  const float smoothMix = smoothMixPtr->load();
+  const float drive = drivePtr->load();
+  const float power = deformPowerPtr->load();
+
   // Optional Savitzky-Golay pre-smoothing of the section interior. Anchors
   // stay raw so seams remain click-free; padding reflects the section around
   // its anchors (zero slope at the anchor, no leakage across seams).
   // Sections shorter than the kernel span are left raw.
-  const bool smooth = kSmoothMix > 0.0f && (b - a) >= 2 * kSmoothHalf;
+  const bool smooth = smoothMix > 0.0f && (b - a) >= 2 * kSmoothHalf;
   const auto tapped = [window, a, b](int j) {
     if (j < a)
       j = 2 * a - j;  // reflect around the left anchor
@@ -281,13 +307,13 @@ void PluginProcessor::deformSection(const float* window,
       float acc = 0.0f;
       for (int k = -kSmoothHalf; k <= kSmoothHalf; ++k)
         acc += kSmoothCoeffs[k + kSmoothHalf] * tapped(i + k);
-      x += kSmoothMix * (acc - x);  // lerp(raw, smoothed, mix)
+      x += smoothMix * (acc - x);  // lerp(raw, smoothed, mix)
     }
     float t = (x - va) / span;
     // Clipping! Theoretically this will never clip because of topology.
     t = juce::jlimit(0.0f, 1.0f, t);
-    const float shaped = std::pow(t, kDeformPower);
-    const float mixed = (1.0f - kDrive) * t + kDrive * shaped;
+    const float shaped = std::pow(t, power);
+    const float mixed = (1.0f - drive) * t + drive * shaped;
     out[i - outOffset] = va + mixed * span;
   }
 }
@@ -382,17 +408,18 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor() {
 }
 
 void PluginProcessor::getStateInformation(juce::MemoryBlock& destData) {
-  // You should use this method to store your parameters in the memory block.
-  // You could do that either as raw data, or use the XML or ValueTree classes
-  // as intermediaries to make it easy to save and load complex data.
-  juce::ignoreUnused(destData);
+  // ValueTree -> XML -> binary: human-readable, not a raw memory dump
+  if (std::unique_ptr<juce::XmlElement> xml = apvts.copyState().createXml())
+    copyXmlToBinary(*xml, destData);
 }
 
 void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
-  // You should use this method to restore your parameters from this memory
-  // block, whose contents will have been created by the getStateInformation()
-  // call.
-  juce::ignoreUnused(data, sizeInBytes);
+  std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
+  if (xml == nullptr)
+    return;
+  juce::ValueTree tree = juce::ValueTree::fromXml(*xml);
+  if (tree.isValid() && tree.hasType(apvts.state.getType()))
+    apvts.replaceState(tree);
 }
 }  // namespace audio_plugin
 

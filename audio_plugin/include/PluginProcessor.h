@@ -40,12 +40,16 @@ private:
   static constexpr int kHopSize = kWindowSize / 2;
   static constexpr int kMaxChannels = 2;
 
-  // DSP constants (become APVTS parameters later)
-  static constexpr float kThreshold =
-      0.05f;  // persistence threshold, normalised units
-  static constexpr float kDrive = 0.0f;  // deformation depth: 0 = passthrough
-  static constexpr float kDeformPower = 2.5f;  // power-curve exponent
-  static constexpr float kSmoothMix = 1.0f;    // pre-smoothing mix
+  // Parameter state. Defaults live in createParameterLayout()
+  juce::AudioProcessorValueTreeState apvts;
+  static juce::AudioProcessorValueTreeState::ParameterLayout
+  createParameterLayout();
+
+  // Cached atomic views of the parameters
+  std::atomic<float>* thresholdPtr = nullptr;
+  std::atomic<float>* drivePtr = nullptr;
+  std::atomic<float>* deformPowerPtr = nullptr;
+  std::atomic<float>* smoothMixPtr = nullptr;
 
   void findExtrema(const float* window);
   int findRoot(int i);
