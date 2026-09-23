@@ -15,8 +15,8 @@ PluginProcessor::PluginProcessor()
             createParameterLayout()) {
   thresholdPtr = apvts.getRawParameterValue("threshold");
   drivePtr = apvts.getRawParameterValue("drive");
-  deformPowerPtr = apvts.getRawParameterValue("deform_power");
   smoothMixPtr = apvts.getRawParameterValue("smooth_mix");
+  warpSlot_.publish(warpCurve_);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -26,8 +26,6 @@ PluginProcessor::createParameterLayout() {
       juce::ParameterID{"threshold", 1}, "Threshold", 0.0f, 1.0f, 0.05f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"drive", 1}, "Drive", 0.0f, 1.0f, 1.0f));
-  layout.add(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"deform_power", 1}, "Deform Power", 0.1f, 10.0f, 2.0f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"smooth_mix", 1}, "Smooth Mix", 0.0f, 1.0f, 0.5f));
   return layout;
@@ -111,6 +109,8 @@ void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   order_.resize(kWindowSize);
   parent_.resize(kWindowSize);
   active_.resize(kWindowSize);
+
+  bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
 
   setLatencySamples(kWindowSize);
 }
@@ -264,6 +264,15 @@ static constexpr float kSmoothCoeffs[kSmoothLen] = {
     -78.0f / 1105.0f,  // tap i+7
 };
 
+float PluginProcessor::warpEval(float t) const {
+  const float pos =
+      juce::jlimit(0.0f, 1.0f, t) * static_cast<float>(kWarpLutSize - 1);
+  const auto i0 = static_cast<size_t>(pos);
+  const auto i1 = std::min(i0 + 1, static_cast<size_t>(kWarpLutSize - 1));
+  const float f = pos - static_cast<float>(i0);
+  return warpLut_[i0] * (1.0f - f) + warpLut_[i1] * f;
+}
+
 void PluginProcessor::deformSection(const float* window,
                                     int a,
                                     int b,
@@ -286,7 +295,6 @@ void PluginProcessor::deformSection(const float* window,
 
   const float smoothMix = smoothMixPtr->load();
   const float drive = drivePtr->load();
-  const float power = deformPowerPtr->load();
 
   // Optional Savitzky-Golay pre-smoothing of the section interior. Anchors
   // stay raw so seams remain click-free; padding reflects the section around
@@ -312,7 +320,7 @@ void PluginProcessor::deformSection(const float* window,
     float t = (x - va) / span;
     // Clipping! Theoretically this will never clip because of topology.
     t = juce::jlimit(0.0f, 1.0f, t);
-    const float shaped = std::pow(t, power);
+    const float shaped = warpEval(t);
     const float mixed = (1.0f - drive) * t + drive * shaped;
     out[i - outOffset] = va + mixed * span;
   }
@@ -341,6 +349,13 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
   const int numChannels = std::min(getTotalNumInputChannels(), kMaxChannels);
   const int numSamples = buffer.getNumSamples();
+
+  // Pick up warp curve edits without locks; rebake LUT only on change
+  WarpSnapshot snap;
+  if (warpSlot_.take(snap, warpSnapSeq_)) {
+    warpSnap_ = snap;
+    bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
+  }
 
   // Step 1: append incoming samples into per-channel input buffers
   for (int ch = 0; ch < numChannels; ++ch) {
@@ -408,8 +423,9 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor() {
 }
 
 void PluginProcessor::getStateInformation(juce::MemoryBlock& destData) {
-  // ValueTree -> XML -> binary: human-readable, not a raw memory dump
-  if (std::unique_ptr<juce::XmlElement> xml = apvts.copyState().createXml())
+  auto state = apvts.copyState();
+  state.appendChild(warpCurve_.toValueTree(), nullptr);
+  if (std::unique_ptr<juce::XmlElement> xml = state.createXml())
     copyXmlToBinary(*xml, destData);
 }
 
@@ -418,6 +434,12 @@ void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
   if (xml == nullptr)
     return;
   juce::ValueTree tree = juce::ValueTree::fromXml(*xml);
+  auto warp = tree.getChildWithName(WarpCurve::kStateTag);
+  if (warp.isValid()) {
+    warpCurve_.fromValueTree(warp);
+    tree.removeChild(warp, nullptr);
+    warpSlot_.publish(warpCurve_);
+  }
   if (tree.isValid() && tree.hasType(apvts.state.getType()))
     apvts.replaceState(tree);
 }

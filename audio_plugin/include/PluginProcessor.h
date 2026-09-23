@@ -34,6 +34,9 @@ public:
   void getStateInformation(juce::MemoryBlock& destData) override;
   void setStateInformation(const void* data, int sizeInBytes) override;
 
+  WarpCurve& warp() { return warpCurve_; }
+  void warpEdited() { warpSlot_.publish(warpCurve_); }
+
 private:
   // Windowing constants
   static constexpr int kWindowSize = 2048;
@@ -48,8 +51,17 @@ private:
   // Cached atomic views of the parameters
   std::atomic<float>* thresholdPtr = nullptr;
   std::atomic<float>* drivePtr = nullptr;
-  std::atomic<float>* deformPowerPtr = nullptr;
   std::atomic<float>* smoothMixPtr = nullptr;
+
+  static constexpr int kWarpLutSize = 1024;
+  // Warp curve: canonical model lives on the message thread; the audio thread
+  // sees it only through lock-free snapshots and its own baked LUT.
+  WarpCurve warpCurve_;
+  WarpSlot warpSlot_;
+  WarpSnapshot warpSnap_;         // audio-thread copy
+  unsigned warpSnapSeq_ = ~0u;
+  std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
+  float warpEval(float t) const;
 
   void findExtrema(const float* window);
   int findRoot(int i);

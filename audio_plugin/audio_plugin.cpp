@@ -4,3 +4,4 @@
 #include "source/PluginEditor.cpp"
 
 // #include all additional .cpp files below
+#include "source/WarpCurve.cpp"
