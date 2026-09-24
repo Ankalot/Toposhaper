@@ -23,7 +23,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 PluginProcessor::createParameterLayout() {
   juce::AudioProcessorValueTreeState::ParameterLayout layout;
   layout.add(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"threshold", 1}, "Threshold", 0.0f, 1.0f, 0.05f));
+      juce::ParameterID{"threshold", 1}, "Threshold", 0.0f, 1.0f, 0.1f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"drive", 1}, "Drive", 0.0f, 1.0f, 1.0f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(

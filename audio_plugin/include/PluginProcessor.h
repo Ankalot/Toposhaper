@@ -37,6 +37,8 @@ public:
   WarpCurve& warp() { return warpCurve_; }
   void warpEdited() { warpSlot_.publish(warpCurve_); }
 
+  juce::AudioProcessorValueTreeState& parameters() { return apvts; }
+
 private:
   // Windowing constants
   static constexpr int kWindowSize = 2048;
