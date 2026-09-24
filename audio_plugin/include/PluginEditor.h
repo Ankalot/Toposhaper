@@ -31,6 +31,8 @@ private:
 
   PluginProcessor& processorRef;
 
+  juce::TooltipWindow tooltipWindow{this, 400};
+
   juce::Slider driveSlider, thresholdSlider, smoothSlider;
   juce::Label driveLabel, warpLabel, thresholdLabel, smoothLabel;
   StubPanel warpStub{"DEFORMATION\nwarp curve - coming soon"};

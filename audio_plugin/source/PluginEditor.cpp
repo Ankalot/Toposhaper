@@ -14,7 +14,8 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   smoothLabel.setText("SMOOTHING", juce::dontSendNotification);
   for (auto* l : {&driveLabel, &warpLabel, &thresholdLabel, &smoothLabel}) {
     l->setJustificationType(juce::Justification::centred);
-    l->setFont(juce::Font(juce::FontOptions().withHeight(15.0f).withStyle("Bold")));
+    l->setFont(
+        juce::Font(juce::FontOptions().withHeight(15.0f).withStyle("Bold")));
     addAndMakeVisible(*l);
   }
 
@@ -23,11 +24,23 @@ PluginEditor::PluginEditor(PluginProcessor& p)
 
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveSlider);
-  thresholdAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
-                                                    "threshold",
-                                                    thresholdSlider);
+  thresholdAtt = std::make_unique<SliderAttachment>(
+      processorRef.parameters(), "threshold", thresholdSlider);
   smoothAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                  "smooth_mix", smoothSlider);
+
+  driveSlider.setTooltip(
+      "Blend between raw and warped: 0 = untouched, 1 = fully deformed using "
+      "DEFORMATION curve.\n"
+      "Only section interiors bend - anchor peaks/valleys stay pinned.");
+
+  smoothSlider.setTooltip(
+      "Denoises section interiors before the warp; anchors stay raw.\n"
+      "Very short sections stay raw - raise Threshold to lengthen them.");
+
+  thresholdSlider.setTooltip(
+      "How strong an extremum must be to anchor a section.\n"
+      "Low = keep fine detail; high = demote noise to texture.");
 
   setResizable(true, false);
   setResizeLimits(560, 420, 1400, 1000);
