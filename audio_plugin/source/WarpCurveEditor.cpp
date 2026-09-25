@@ -96,7 +96,9 @@ void WarpCurveEditor::notify() {
   repaint();
 }
 
-void WarpCurveEditor::timerCallback() { repaint(); }
+void WarpCurveEditor::timerCallback() {
+  repaint();
+}
 
 void WarpCurveEditor::mouseDown(const juce::MouseEvent& e) {
   const auto hit = hitTest(e.position);
@@ -136,8 +138,9 @@ void WarpCurveEditor::mouseMove(const juce::MouseEvent& e) {
   const auto h = hitTest(e.position);
   if (h.kind != hover_.kind || h.index != hover_.index) {
     hover_ = h;
-    setMouseCursor(h.kind == Kind::none ? juce::MouseCursor::NormalCursor
-                                        : juce::MouseCursor::PointingHandCursor);
+    setMouseCursor(h.kind == Kind::none
+                       ? juce::MouseCursor::NormalCursor
+                       : juce::MouseCursor::PointingHandCursor);
     repaint();
   }
 }
@@ -187,11 +190,10 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
   for (int i = 0; i < 24; i += 2) {
     const float t0 = static_cast<float>(i) / 24.0f;
     const float t1 = static_cast<float>(i + 1) / 24.0f;
-    g.drawLine({r.getX() + t0 * r.getWidth(),
-                r.getBottom() - t0 * r.getHeight(),
-                r.getX() + t1 * r.getWidth(),
-                r.getBottom() - t1 * r.getHeight()},
-               1.0f);
+    g.drawLine(
+        {r.getX() + t0 * r.getWidth(), r.getBottom() - t0 * r.getHeight(),
+         r.getX() + t1 * r.getWidth(), r.getBottom() - t1 * r.getHeight()},
+        1.0f);
   }
 
   // Curve as exact quadratic Beziers (same math as the DSP LUT)

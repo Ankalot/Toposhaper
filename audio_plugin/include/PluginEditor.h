@@ -36,7 +36,7 @@ private:
   juce::Slider driveSlider, thresholdSlider, smoothSlider;
   juce::Label driveLabel, warpLabel, thresholdLabel, smoothLabel;
   WarpCurveEditor warpEditor;
-  StubPanel scopeStub{"TOPOLOGY VIEW - coming soon"};
+  ScopeView scopeView;
 
   // Declared after the widgets so they outlive the attachments they bind
   using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;

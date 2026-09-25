@@ -6,3 +6,4 @@
 // #include all additional .cpp files below
 #include "source/WarpCurve.cpp"
 #include "source/WarpCurveEditor.cpp"
+#include "source/ScopeView.cpp"

@@ -2,7 +2,8 @@ namespace audio_plugin {
 PluginEditor::PluginEditor(PluginProcessor& p)
     : AudioProcessorEditor(&p),
       processorRef(p),
-      warpEditor(processorRef.warp(), [this] { processorRef.warpEdited(); }) {
+      warpEditor(processorRef.warp(), [this] { processorRef.warpEdited(); }),
+      scopeView(processorRef) {
   // Rotary knobs bound to the APVTS parameters
   for (auto* s : {&driveSlider, &thresholdSlider, &smoothSlider}) {
     s->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -22,7 +23,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   }
 
   addAndMakeVisible(warpEditor);
-  addAndMakeVisible(scopeStub);
+  addAndMakeVisible(scopeView);
 
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveSlider);
@@ -89,6 +90,6 @@ void PluginEditor::resized() {
   placeKnob(thresholdLabel, thresholdSlider, c2);
   placeKnob(smoothLabel, smoothSlider, c3);
 
-  scopeStub.setBounds(scope);
+  scopeView.setBounds(scope);
 }
 }  // namespace audio_plugin

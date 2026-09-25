@@ -39,6 +39,11 @@ public:
 
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
 
+  // Display history of the processed output (ch0) for the scope view.
+  // The UI copies up to n samples ending kScopeMargin before the write
+  // cursor, so it never touches the block the audio thread is writing.
+  size_t readScopeSpan(float* dst, size_t n) const;
+
 private:
   // Windowing constants
   static constexpr int kWindowSize = 2048;
@@ -60,10 +65,19 @@ private:
   // sees it only through lock-free snapshots and its own baked LUT.
   WarpCurve warpCurve_;
   WarpSlot warpSlot_;
-  WarpSnapshot warpSnap_;         // audio-thread copy
+  WarpSnapshot warpSnap_;  // audio-thread copy
   unsigned warpSnapSeq_ = ~0u;
   std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
   float warpEval(float t) const;
+
+  // Scope display ring: 65536 samples of processed ch0 history.
+  static constexpr int kScopeBits = 16;
+  static constexpr size_t kScopeMask =
+      (static_cast<size_t>(1) << kScopeBits) - 1;
+  static constexpr size_t kScopeMargin =
+      2048;  // >= max host block, invisible lag
+  std::array<float, static_cast<size_t>(1) << kScopeBits> scopeRing_{};
+  std::atomic<uint64_t> scopeWrite_{0};
 
   void findExtrema(const float* window);
   int findRoot(int i);

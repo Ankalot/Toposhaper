@@ -264,6 +264,21 @@ static constexpr float kSmoothCoeffs[kSmoothLen] = {
     -78.0f / 1105.0f,  // tap i+7
 };
 
+size_t PluginProcessor::readScopeSpan(float* dst, size_t n) const {
+  constexpr size_t kMaxSpan =
+      (static_cast<size_t>(1) << kScopeBits) - kScopeMargin;
+  if (n > kMaxSpan)
+    n = kMaxSpan;
+  const uint64_t w = scopeWrite_.load(std::memory_order_acquire);
+  if (w < static_cast<uint64_t>(kScopeMargin) + n)
+    return 0;  // history not deep enough yet (startup)
+  const uint64_t end = w - kScopeMargin;
+  const uint64_t start = end - n;
+  for (size_t i = 0; i < n; ++i)
+    dst[i] = scopeRing_[static_cast<size_t>((start + i) & kScopeMask)];
+  return n;
+}
+
 float PluginProcessor::warpEval(float t) const {
   const float pos =
       juce::jlimit(0.0f, 1.0f, t) * static_cast<float>(kWarpLutSize - 1);
@@ -403,6 +418,15 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // >= numSamples + 1); kept so the output buffer is always fully written
     for (int i = toOutput; i < numSamples; ++i)
       out[i] = 0.0f;
+
+    // Feed the scope display ring (ch0 only; UI reads it lock-free)
+    if (ch == 0 && toOutput > 0) {
+      const uint64_t w = scopeWrite_.load(std::memory_order_relaxed);
+      for (int i = 0; i < toOutput; ++i)
+        scopeRing_[(w + static_cast<uint64_t>(i)) & kScopeMask] = out[i];
+      scopeWrite_.store(w + static_cast<uint64_t>(toOutput),
+                        std::memory_order_release);
+    }
 
     if (toOutput > 0)
       outputBuffer[ch].erase(outputBuffer[ch].begin(),
