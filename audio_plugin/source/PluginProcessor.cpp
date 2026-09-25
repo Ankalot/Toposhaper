@@ -264,19 +264,50 @@ static constexpr float kSmoothCoeffs[kSmoothLen] = {
     -78.0f / 1105.0f,  // tap i+7
 };
 
-size_t PluginProcessor::readScopeSpan(float* dst, size_t n) const {
+size_t PluginProcessor::readScopeSpan(float* dst,
+                                      size_t n,
+                                      uint64_t& startAbs) const {
   constexpr size_t kMaxSpan =
       (static_cast<size_t>(1) << kScopeBits) - kScopeMargin;
   if (n > kMaxSpan)
     n = kMaxSpan;
   const uint64_t w = scopeWrite_.load(std::memory_order_acquire);
-  if (w < static_cast<uint64_t>(kScopeMargin) + n)
-    return 0;  // history not deep enough yet (startup)
-  const uint64_t end = w - kScopeMargin;
-  const uint64_t start = end - n;
+  if (w < static_cast<uint64_t>(kScopeMargin) + n) {
+    startAbs = 0;
+    return 0;
+  }
+  const uint64_t start = w - kScopeMargin - n;
   for (size_t i = 0; i < n; ++i)
     dst[i] = scopeRing_[static_cast<size_t>((start + i) & kScopeMask)];
+  startAbs = start;
   return n;
+}
+
+size_t PluginProcessor::readInputSpanAt(float* dst,
+                                        size_t n,
+                                        uint64_t startAbs) const {
+  const uint64_t w = inputWrite_.load(std::memory_order_acquire);
+  if (w < static_cast<uint64_t>(kScopeMargin) + n)
+    return 0;
+  const uint64_t avail = w - kScopeMargin;
+  if (startAbs + n > avail ||
+      n > (static_cast<size_t>(1) << kScopeBits) - kScopeMargin)
+    return 0;
+  for (size_t i = 0; i < n; ++i)
+    dst[i] = inputRing_[static_cast<size_t>((startAbs + i) & kScopeMask)];
+  return n;
+}
+
+size_t PluginProcessor::readMarkerSpan(ScopeMarker* dst, size_t n) const {
+  const uint64_t w = markerWrite_.load(std::memory_order_acquire);
+  const uint64_t end = w > 8 ? w - 8 : 0;  // skip possibly-in-flight tail
+  const uint64_t cap = static_cast<uint64_t>(1) << kMarkerBits;
+  uint64_t start = end > n ? end - n : 0;
+  if (end - start > cap - 64)
+    start = end - (cap - 64);
+  for (uint64_t i = start; i < end; ++i)
+    dst[i - start] = markerRing_[static_cast<size_t>(i & kMarkerMask)];
+  return static_cast<size_t>(end - start);
 }
 
 float PluginProcessor::warpEval(float t) const {
@@ -376,6 +407,13 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
   for (int ch = 0; ch < numChannels; ++ch) {
     const float* in = buffer.getReadPointer(ch);
     inputBuffer[ch].insert(inputBuffer[ch].end(), in, in + numSamples);
+    if (ch == 0) {  // raw input ring for the ghost trace
+      const uint64_t w = inputWrite_.load(std::memory_order_relaxed);
+      for (int i = 0; i < numSamples; ++i)
+        inputRing_[(w + static_cast<uint64_t>(i)) & kScopeMask] = in[i];
+      inputWrite_.store(w + static_cast<uint64_t>(numSamples),
+                        std::memory_order_release);
+    }
   }
 
   // Step 2: while a full analysis window is available, run ONE analysis pass
@@ -384,11 +422,27 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
   // channel
   while (inputBuffer[0].size() >= static_cast<size_t>(kWindowSize)) {
     for (int ch = 0; ch < numChannels; ++ch) {
+      const uint64_t winAbs = inputBase_;
       findExtrema(inputBuffer[ch].data());
 
       const int zoneEnd = findZoneEnd();      // in [kHopSize, kWindowSize - 1]
       const int zoneStart = prevZoneEnd[ch];  // in [0, kHopSize - 1]
       const int zoneLen = zoneEnd - zoneStart;  // in [1, kWindowSize - 1]
+
+      if (ch == 0) {  // publish analysis markers for the scope overlay
+        uint64_t mw = markerWrite_.load(std::memory_order_relaxed);
+        for (const int idx : extrema_) {
+          markerRing_[mw & kMarkerMask] =
+              ScopeMarker{winAbs + static_cast<uint64_t>(idx) + kWindowSize, 0};
+          ++mw;
+        }
+        if (zoneEnd == kWindowSize - 1) {  // fallback seam, not a real extremum
+          markerRing_[mw & kMarkerMask] = ScopeMarker{
+              winAbs + static_cast<uint64_t>(zoneEnd) + kWindowSize, 1};
+          ++mw;
+        }
+        markerWrite_.store(mw, std::memory_order_release);
+      }
 
       const size_t oldSize = outputBuffer[ch].size();
       outputBuffer[ch].resize(oldSize + static_cast<size_t>(zoneLen));
@@ -403,6 +457,8 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
       inputBuffer[ch].erase(inputBuffer[ch].begin(),
                             inputBuffer[ch].begin() + kHopSize);
     }
+
+    inputBase_ += kHopSize;
   }
 
   // Step 3: pull numSamples from the head of each output FIFO

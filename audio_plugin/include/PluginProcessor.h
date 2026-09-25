@@ -3,6 +3,12 @@
 #include <vector>
 
 namespace audio_plugin {
+// Scope overlay marker: ring position (output stream index) + kind
+struct ScopeMarker {
+  uint64_t pos = 0;  // output stream index = input abs + kWindowSize
+  int kind = 0;      // 0 = kept extremum, 1 = fallback seam (no extremum found)
+};
+
 class PluginProcessor : public juce::AudioProcessor {
 public:
   PluginProcessor();
@@ -39,10 +45,14 @@ public:
 
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
 
-  // Display history of the processed output (ch0) for the scope view.
-  // The UI copies up to n samples ending kScopeMargin before the write
-  // cursor, so it never touches the block the audio thread is writing.
-  size_t readScopeSpan(float* dst, size_t n) const;
+  // Scope data accessors (UI thread). Processed ch0 history ends kScopeMargin
+  // before the write cursor; startAbs returns the ring position of dst[0].
+  size_t readScopeSpan(float* dst, size_t n, uint64_t& startAbs) const;
+  // Raw ch0 history at exact ring positions [startAbs, startAbs+n): used to
+  // overlay the input aligned through the constant latency.
+  size_t readInputSpanAt(float* dst, size_t n, uint64_t startAbs) const;
+  // Most recent markers (extrema / fallback seams), newest last.
+  size_t readMarkerSpan(ScopeMarker* dst, size_t n) const;
 
 private:
   // Windowing constants
@@ -70,14 +80,21 @@ private:
   std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
   float warpEval(float t) const;
 
-  // Scope display ring: 65536 samples of processed ch0 history.
+  // Scope rings: processed and raw ch0, plus analysis markers
   static constexpr int kScopeBits = 16;
   static constexpr size_t kScopeMask =
       (static_cast<size_t>(1) << kScopeBits) - 1;
-  static constexpr size_t kScopeMargin =
-      2048;  // >= max host block, invisible lag
+  static constexpr size_t kScopeMargin = 2048;
   std::array<float, static_cast<size_t>(1) << kScopeBits> scopeRing_{};
+  std::array<float, static_cast<size_t>(1) << kScopeBits> inputRing_{};
   std::atomic<uint64_t> scopeWrite_{0};
+  std::atomic<uint64_t> inputWrite_{0};
+  static constexpr int kMarkerBits = 13;
+  static constexpr size_t kMarkerMask =
+      (static_cast<size_t>(1) << kMarkerBits) - 1;
+  std::array<ScopeMarker, static_cast<size_t>(1) << kMarkerBits> markerRing_{};
+  std::atomic<uint64_t> markerWrite_{0};
+  uint64_t inputBase_ = 0;  // absolute index of inputBuffer[ch][0]
 
   void findExtrema(const float* window);
   int findRoot(int i);
