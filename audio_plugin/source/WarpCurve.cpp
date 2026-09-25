@@ -1,6 +1,5 @@
 namespace audio_plugin {
-    
-namespace {
+
 constexpr float kEps = 1e-4f;
 
 float clamp01(float v) {
@@ -13,30 +12,22 @@ WarpCurve::Node lerp(const WarpCurve::Node& a,
   return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
 }
 
-WarpCurve::Node bezier(const WarpCurve::Seg& s, float tau) {
+WarpCurve::Node WarpCurve::bezier(const Seg& s, float tau) {
   const float om = 1.0f - tau;
   const float w0 = om * om, w1 = 2.0f * tau * om, w2 = tau * tau;
   return {w0 * s.p0.x + w1 * s.c.x + w2 * s.p1.x,
           w0 * s.p0.y + w1 * s.c.y + w2 * s.p1.y};
 }
-}  // namespace
-
-void WarpCurve::reset() {
-  pts_ = {{0.0f, 0.0f}, {1.0f, 1.0f}};
-  hnd_ = {{0.5f, 0.5f}};
-}
-
-WarpCurve::Seg WarpCurve::segment(int s) const {
-  return {pts_[static_cast<size_t>(s)], hnd_[static_cast<size_t>(s)],
-          pts_[static_cast<size_t>(s) + 1]};
-}
 
 float WarpCurve::solveTau(const Seg& s, float x) {
-  // x(tau) is monotone because the handle is clamped into the segment box
+  // Bisection on x(tau): monotone because C is clamped into the segment box.
+  // (Fixed: compare the actual x coordinate, not a degenerate component.)
   float lo = 0.0f, hi = 1.0f;
   for (int it = 0; it < 24; ++it) {
     const float m = 0.5f * (lo + hi);
-    if (bezier({{s.p0.x, 0.0f}, {s.c.x, 0.0f}, {s.p1.x, 0.0f}}, m).y < x)
+    const float om = 1.0f - m;
+    const float xm = om * om * s.p0.x + 2.0f * m * om * s.c.x + m * m * s.p1.x;
+    if (xm < x)
       lo = m;
     else
       hi = m;
@@ -44,28 +35,22 @@ float WarpCurve::solveTau(const Seg& s, float x) {
   return 0.5f * (lo + hi);
 }
 
-float WarpCurve::eval(float t) const {
-  const float x = clamp01(t);
-  int s = 0;
-  while (s < numSegments() - 1 && x >= pts_[static_cast<size_t>(s) + 1].x)
-    ++s;
-  return bezier(segment(s), solveTau(segment(s), x)).y;
+WarpCurve::Node WarpCurve::handleNode(int s) const {
+  return bezier(segment(s), 0.5f);  // Q = (C + mid)/2, always on the curve
 }
 
-void WarpCurve::bake(float* dst, int n) const {
-  bakeWarpLut(makeWarpSnapshot(*this), dst, n);
+void WarpCurve::reset() {
+  pts_ = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+  // Default character: the exact parabola y = x^2. A quadratic Bezier with
+  // the control point at (0.5, 0) reproduces it exactly (x(t) = t, y(t) = t^2),
+  // so the plugin audibly deforms out of the box instead of sitting in a
+  // silent identity bypass. Matches the old kDeformPower = 2.0 character.
+  hnd_ = {{0.5f, 0.0f}};
 }
 
-void WarpCurve::clampHandlesAround(int i) {
-  for (int s : {i - 1, i}) {
-    if (s < 0 || s >= numSegments())
-      continue;
-    const Node& a = pts_[static_cast<size_t>(s)];
-    const Node& b = pts_[static_cast<size_t>(s) + 1];
-    Node& h = hnd_[static_cast<size_t>(s)];
-    h.x = juce::jlimit(a.x, b.x, h.x);
-    h.y = juce::jlimit(a.y, b.y, h.y);
-  }
+WarpCurve::Seg WarpCurve::segment(int s) const {
+  return {pts_[static_cast<size_t>(s)], hnd_[static_cast<size_t>(s)],
+          pts_[static_cast<size_t>(s) + 1]};
 }
 
 bool WarpCurve::movePoint(int i, float x, float y) {
@@ -76,18 +61,28 @@ bool WarpCurve::movePoint(int i, float x, float y) {
                      pts_[static_cast<size_t>(i) + 1].x, x);
   p.y = juce::jlimit(pts_[static_cast<size_t>(i) - 1].y,
                      pts_[static_cast<size_t>(i) + 1].y, y);
-  clampHandlesAround(i);
+  for (int s : {i - 1, i}) {  // keep neighbouring C inside the new boxes
+    if (s < 0 || s >= numSegments())
+      continue;
+    const Node& a = pts_[static_cast<size_t>(s)];
+    const Node& b = pts_[static_cast<size_t>(s) + 1];
+    Node& c = hnd_[static_cast<size_t>(s)];
+    c.x = juce::jlimit(a.x, b.x, c.x);
+    c.y = juce::jlimit(a.y, b.y, c.y);
+  }
   return true;
 }
 
-bool WarpCurve::moveHandle(int s, float x, float y) {
+bool WarpCurve::moveHandle(int s, float qx, float qy) {
   if (s < 0 || s >= numSegments())
     return false;
   const Node& a = pts_[static_cast<size_t>(s)];
   const Node& b = pts_[static_cast<size_t>(s) + 1];
-  Node& h = hnd_[static_cast<size_t>(s)];
-  h.x = juce::jlimit(a.x, b.x, x);
-  h.y = juce::jlimit(a.y, b.y, y);
+  const Node mid{0.5f * (a.x + b.x), 0.5f * (a.y + b.y)};
+  Node c{2.0f * qx - mid.x, 2.0f * qy - mid.y};  // C = 2*Q - mid
+  c.x = juce::jlimit(a.x, b.x, c.x);             // monotonicity guard
+  c.y = juce::jlimit(a.y, b.y, c.y);
+  hnd_[static_cast<size_t>(s)] = c;
   return true;
 }
 
@@ -96,16 +91,15 @@ int WarpCurve::addPoint(float x) {
     return -1;
   const float cx = juce::jlimit(kEps, 1.0f - kEps, x);
   int s = -1;
-  for (int i = 0; i < numSegments(); ++i) {
+  for (int i = 0; i < numSegments(); ++i)
     if (cx > pts_[static_cast<size_t>(i)].x + kEps &&
         cx < pts_[static_cast<size_t>(i) + 1].x - kEps) {
       s = i;
       break;
     }
-  }
   if (s < 0)
     return -1;
-  // Exact split: de Casteljau at the parameter where the segment crosses x
+  // Exact de Casteljau split: curve shape preserved, new point on the curve
   const Seg seg = segment(s);
   const float tau = solveTau(seg, cx);
   const Node m = bezier(seg, tau);
@@ -123,7 +117,7 @@ bool WarpCurve::removePoint(int i) {
   const Node p0 = pts_[static_cast<size_t>(i) - 1];
   const Node m = pts_[static_cast<size_t>(i)];
   const Node p1 = pts_[static_cast<size_t>(i) + 1];
-  // Re-fit one handle so the merged segment still passes through m
+  // Refit one handle so the merged segment still passes through m
   const float denom = p1.x - p0.x;
   float tau = 0.5f;
   if (denom > 1e-6f)
@@ -138,9 +132,21 @@ bool WarpCurve::removePoint(int i) {
     c.y = juce::jlimit(p0.y, p1.y, c.y);
   }
   pts_.erase(pts_.begin() + i);
-  hnd_.erase(hnd_.begin() + i);          // drop right handle...
-  hnd_[static_cast<size_t>(i) - 1] = c;  // ...re-fit the left one
+  hnd_.erase(hnd_.begin() + i);
+  hnd_[static_cast<size_t>(i) - 1] = c;
   return true;
+}
+
+float WarpCurve::eval(float t) const {
+  const float x = clamp01(t);
+  int s = 0;
+  while (s < numSegments() - 1 && x >= pts_[static_cast<size_t>(s) + 1].x)
+    ++s;
+  return bezier(segment(s), solveTau(segment(s), x)).y;
+}
+
+void WarpCurve::bake(float* dst, int n) const {
+  bakeWarpLut(makeWarpSnapshot(*this), dst, n);
 }
 
 void WarpCurve::clampAll() {
@@ -159,8 +165,13 @@ void WarpCurve::clampAll() {
   for (size_t i = 1; i < pts_.size(); ++i)
     pts_[i].y = std::max(pts_[i].y, pts_[i - 1].y);
   hnd_.resize(pts_.size() - 1);
-  for (int s = 0; s < numSegments(); ++s)
-    clampHandlesAround(s);
+  for (int s = 0; s < numSegments(); ++s) {
+    const Node& a = pts_[static_cast<size_t>(s)];
+    const Node& b = pts_[static_cast<size_t>(s) + 1];
+    Node& c = hnd_[static_cast<size_t>(s)];
+    c.x = juce::jlimit(a.x, b.x, c.x);
+    c.y = juce::jlimit(a.y, b.y, c.y);
+  }
 }
 
 juce::ValueTree WarpCurve::toValueTree() const {
@@ -211,8 +222,8 @@ WarpSnapshot makeWarpSnapshot(const WarpCurve& c) {
     s.py[i] = c.point(i).y;
   }
   for (int q = 0; q < s.n - 1; ++q) {
-    s.hx[q] = c.handle(q).x;
-    s.hy[q] = c.handle(q).y;
+    s.hx[q] = c.control(q).x;
+    s.hy[q] = c.control(q).y;
   }
   return s;
 }
@@ -246,7 +257,7 @@ void bakeWarpLut(const WarpSnapshot& s, float* dst, int n) {
 
 void WarpSlot::publish(const WarpCurve& c) {
   const unsigned v = seq_.load(std::memory_order_relaxed);
-  seq_.store(v | 1u, std::memory_order_relaxed);  // odd = write in progress
+  seq_.store(v | 1u, std::memory_order_relaxed);
   data_ = makeWarpSnapshot(c);
   seq_.store(v + 2, std::memory_order_release);
 }
@@ -254,7 +265,7 @@ void WarpSlot::publish(const WarpCurve& c) {
 bool WarpSlot::take(WarpSnapshot& dst, unsigned& lastSeq) const {
   unsigned v0 = seq_.load(std::memory_order_acquire);
   if (v0 == lastSeq)
-    return false;  // nothing new
+    return false;
   for (int spin = 0; spin < 64; ++spin) {
     if (v0 & 1u) {
       v0 = seq_.load(std::memory_order_acquire);
@@ -268,7 +279,7 @@ bool WarpSlot::take(WarpSnapshot& dst, unsigned& lastSeq) const {
     }
     v0 = v1;
   }
-  return false;  // contended: skip, take next block
+  return false;
 }
 
 }  // namespace audio_plugin

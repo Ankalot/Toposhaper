@@ -1,6 +1,8 @@
 namespace audio_plugin {
 PluginEditor::PluginEditor(PluginProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p) {
+    : AudioProcessorEditor(&p),
+      processorRef(p),
+      warpEditor(processorRef.warp(), [this] { processorRef.warpEdited(); }) {
   // Rotary knobs bound to the APVTS parameters
   for (auto* s : {&driveSlider, &thresholdSlider, &smoothSlider}) {
     s->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -19,7 +21,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
     addAndMakeVisible(*l);
   }
 
-  addAndMakeVisible(warpStub);
+  addAndMakeVisible(warpEditor);
   addAndMakeVisible(scopeStub);
 
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
@@ -56,15 +58,8 @@ void PluginEditor::placeKnob(juce::Label& lab,
 }
 
 void PluginEditor::paint(juce::Graphics& g) {
-  // (Our component is opaque, so we must completely fill the background with a
-  // solid colour)
   g.fillAll(
       getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
-
-  g.setColour(juce::Colours::white);
-  g.setFont(15.0f);
-  g.drawFittedText("Hello World!", getLocalBounds(),
-                   juce::Justification::centred, 1);
 }
 
 void PluginEditor::resized() {
@@ -85,10 +80,11 @@ void PluginEditor::resized() {
   auto c3 = top;
 
   placeKnob(driveLabel, driveSlider, c0);
-  {  // warp column: title + stub panel
+  {  // warp column: title + always-square editor
     auto r = c1;
     warpLabel.setBounds(r.removeFromTop(26));
-    warpStub.setBounds(r);
+    const int side = std::min(r.getWidth(), r.getHeight());
+    warpEditor.setBounds(r.withSizeKeepingCentre(side, side));
   }
   placeKnob(thresholdLabel, thresholdSlider, c2);
   placeKnob(smoothLabel, smoothSlider, c3);

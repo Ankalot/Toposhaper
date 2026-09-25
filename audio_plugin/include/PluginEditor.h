@@ -35,7 +35,7 @@ private:
 
   juce::Slider driveSlider, thresholdSlider, smoothSlider;
   juce::Label driveLabel, warpLabel, thresholdLabel, smoothLabel;
-  StubPanel warpStub{"DEFORMATION\nwarp curve - coming soon"};
+  WarpCurveEditor warpEditor;
   StubPanel scopeStub{"TOPOLOGY VIEW - coming soon"};
 
   // Declared after the widgets so they outlive the attachments they bind
