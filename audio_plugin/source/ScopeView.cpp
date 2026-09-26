@@ -12,6 +12,7 @@ const juce::Colour kScopeGhost{0x38e8ecf5};
 const juce::Colour kScopeText{0x99e8ecf5};
 const juce::Colour kScopeMarkExt{0xff5aa2ff};   // kept persistent extrema
 const juce::Colour kScopeMarkFall{0xffe5484d};  // fallback seam (no extremum)
+const juce::Colour kScopeDelta{0x1f4f7dff};
 constexpr int kScopeStripH = 24;
 
 int niceDiv(int viewLen) {
@@ -43,9 +44,9 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
 
   vZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
   vZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-  vZoom_.setRange(-2.0, 3.0, 0.01);  // gain = 2^v: 0.25x .. 8x
+  vZoom_.setRange(-2.0, 5.0, 0.01);  // gain = 2^v: 0.25x .. 32x
   vZoom_.setValue(0.0, juce::dontSendNotification);
-  vZoom_.setTooltip("Vertical zoom (amplitude): 0.25x .. 8x");
+  vZoom_.setTooltip("Vertical zoom (amplitude): 0.25x .. 32x");
   vZoom_.setScrollWheelEnabled(false);
   vZoom_.onValueChange = [this] { repaint(); };
   addAndMakeVisible(vZoom_);
@@ -205,6 +206,11 @@ void ScopeView::buildPaths(const juce::Rectangle<float>& r) {
 
   juce::Path out, in;
   bool firstOut = true, firstIn = true;
+  juce::Path delta;
+  std::vector<float> dxs, dOut, dIn;
+  dxs.reserve(static_cast<size_t>(w));
+  dOut.reserve(static_cast<size_t>(w));
+  dIn.reserve(static_cast<size_t>(w));
   for (int c = 0; c < w; ++c) {
     const int p0 =
         viewStart_ + static_cast<int>(static_cast<int64_t>(c) * viewLen_ / w);
@@ -247,9 +253,24 @@ void ScopeView::buildPaths(const juce::Rectangle<float>& r) {
         } else
           in.lineTo(x, cy - imx * scale);
         in.lineTo(x, cy - imn * scale);
+
+        if (mn <= mx) {
+          dxs.push_back(x);
+          dOut.push_back(cy - 0.5f * (mn + mx) * scale);
+          dIn.push_back(cy - 0.5f * (imn + imx) * scale);
+        }
       }
     }
   }
+  if (dxs.size() >= 2) {
+    delta.startNewSubPath(dxs[0], dOut[0]);
+    for (size_t i = 1; i < dxs.size(); ++i)
+      delta.lineTo(dxs[i], dOut[i]);
+    for (size_t i = dxs.size(); i-- > 0;)
+      delta.lineTo(dxs[i], dIn[i]);
+    delta.closeSubPath();
+  }
+  deltaPath_ = delta;
   inPath_ = in;
   outPath_ = out;
 
@@ -289,14 +310,18 @@ void ScopeView::paint(juce::Graphics& g) {
       break;
     g.setColour(ago == 0 ? kScopeZero : kScopeGrid);
     g.drawLine({x, r.getY(), x, r.getBottom()});
-    g.setColour(kScopeText);
-    g.drawText(juce::String(ago), juce::roundToInt(x) + 2,
-               juce::roundToInt(r.getY()) + 2, 64, 12,
-               juce::Justification::left, false);
-    if (sr > 0.0 && ago > 0)
-      g.drawText(juce::String(1000.0 * ago / sr, 2) + "ms",
-                 juce::roundToInt(x) + 2, juce::roundToInt(r.getBottom()) - 14,
-                 72, 12, juce::Justification::left, false);
+    const bool inGutter = x < r.getX() + 58.0f;  // left column reserved for dB
+    if (!inGutter) {
+      g.setColour(kScopeText);
+      g.drawText(juce::String(ago), juce::roundToInt(x) + 2,
+                 juce::roundToInt(r.getY()) + 2, 64, 12,
+                 juce::Justification::left, false);
+      if (sr > 0.0 && ago > 0)
+        g.drawText(juce::String(1000.0 * ago / sr, 2) + "ms",
+                   juce::roundToInt(x) + 2,
+                   juce::roundToInt(r.getBottom()) - 14, 72, 12,
+                   juce::Justification::left, false);
+    }
   }
 
   // Centre zero line
@@ -312,7 +337,7 @@ void ScopeView::paint(juce::Graphics& g) {
     int db;
   };
   juce::Array<DbLine> dbLines;
-  for (const int db : {0, -3, -6, -12, -24, -48}) {
+  for (const int db : {0, -3, -6, -12, -24, -36, -48}) {
     const float a = std::pow(10.0f, static_cast<float>(db) / 20.0f) * scale;
     for (const float sgn : {1.0f, -1.0f}) {
       const float y = cy - sgn * a;
@@ -334,9 +359,11 @@ void ScopeView::paint(juce::Graphics& g) {
     g.setColour(L.db == 0 ? kScopeZero : kScopeGrid);
     g.drawLine({r.getX(), L.y, r.getRight(), L.y});
     g.setColour(kScopeText);
-    g.drawText(juce::String(L.db) + " dB", juce::roundToInt(r.getX()) + 2,
-               juce::roundToInt(L.y) - 12, 52, 12, juce::Justification::left,
-               false);
+    const int ly = juce::jlimit(juce::roundToInt(r.getY()) + 1,
+                                juce::roundToInt(r.getBottom()) - 13,
+                                juce::roundToInt(L.y) - 12);
+    g.drawText(juce::String(L.db) + " dB", juce::roundToInt(r.getX()) + 2, ly,
+               52, 12, juce::Justification::left, false);
   }
 
   // Traces, ghost and markers: clipped to the trace rect so high vertical
@@ -344,6 +371,8 @@ void ScopeView::paint(juce::Graphics& g) {
   g.saveState();
   g.reduceClipRegion(r.toNearestInt());
   if (inN_ > 0) {
+    g.setColour(kScopeDelta);
+    g.fillPath(deltaPath_);
     g.setColour(kScopeGhost);
     g.strokePath(inPath_, juce::PathStrokeType(1.2f));
   }

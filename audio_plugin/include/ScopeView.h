@@ -43,6 +43,7 @@ private:
   juce::String modeLabel_;
 
   juce::Path inPath_, outPath_;
+  juce::Path deltaPath_;
   juce::Path trail_[3];  // [0] newest; older drawn dimmer (phosphor)
   int trailN_ = 0;
 

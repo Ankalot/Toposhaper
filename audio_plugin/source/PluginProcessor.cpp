@@ -171,8 +171,9 @@ void PluginProcessor::findExtrema(const float* window) {
     mx = std::max(mx, window[i]);
   }
   const float range = mx - mn;
-  if (range < 1e-9f)
-    return;  // silence / DC: nothing to keep
+  windowSilent_ = range < 1e-9f;
+  if (windowSilent_)
+    return;  // silence / DC: nothing to keep, nothing to mark
 
   // Sweep sample indices by ascending value (ties by index -> deterministic).
   // Union-find flooding: components are born at minima and die at maxima.
@@ -300,7 +301,10 @@ size_t PluginProcessor::readInputSpanAt(float* dst,
 
 size_t PluginProcessor::readMarkerSpan(ScopeMarker* dst, size_t n) const {
   const uint64_t w = markerWrite_.load(std::memory_order_acquire);
-  const uint64_t end = w > 8 ? w - 8 : 0;  // skip possibly-in-flight tail
+  const uint64_t end = w;  // entries < w are final: the release store at the
+                           // end of each write burst orders them; the next
+                           // burst writes [w, w+burst), which cannot wrap into
+                           // [w-n, w) because n + burst << ring size
   const uint64_t cap = static_cast<uint64_t>(1) << kMarkerBits;
   uint64_t start = end > n ? end - n : 0;
   if (end - start > cap - 64)
@@ -436,7 +440,7 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
               ScopeMarker{winAbs + static_cast<uint64_t>(idx) + kWindowSize, 0};
           ++mw;
         }
-        if (zoneEnd == kWindowSize - 1) {  // fallback seam, not a real extremum
+        if (zoneEnd == kWindowSize - 1 && !windowSilent_) {  // fallback seam
           markerRing_[mw & kMarkerMask] = ScopeMarker{
               winAbs + static_cast<uint64_t>(zoneEnd) + kWindowSize, 1};
           ++mw;

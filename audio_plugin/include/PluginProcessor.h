@@ -95,6 +95,8 @@ private:
   std::array<ScopeMarker, static_cast<size_t>(1) << kMarkerBits> markerRing_{};
   std::atomic<uint64_t> markerWrite_{0};
   uint64_t inputBase_ = 0;  // absolute index of inputBuffer[ch][0]
+  bool windowSilent_ =
+      false;  // last analysis window was degenerate (silence/DC)
 
   void findExtrema(const float* window);
   int findRoot(int i);
