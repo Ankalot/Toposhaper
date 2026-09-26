@@ -314,7 +314,7 @@ void ScopeView::refresh() {
     vs = static_cast<int>(spanN_[prim_]) - viewLen_;  // FREE / SCROLL
   viewStart_ = vs;
 
-  marks_.resize(1024);
+  marks_.resize(8192);
   markN_ = proc_.readMarkerSpan(marks_.data(), marks_.size());
 
   // Shared vertical scale (common V/div across modes and lanes)

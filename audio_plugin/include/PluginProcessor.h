@@ -79,8 +79,38 @@ private:
   std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
   float warpEval(float t) const;
 
-  // Scope rings: processed and raw, per channel, plus analysis markers
-  static constexpr int kScopeBits = 16;
+  // =========================================================================
+  // Scope / marker ring sizing (edit together, don't change one alone)
+  //
+  // Scope ring (2^kScopeBits samples, per channel):
+  //   kScopeMargin     >= max host block (safety buffer against in-flight
+  //   writes) kMaxSpan         = 2^kScopeBits - kScopeMargin  (what the reader
+  //   can copy) UI want          = viewLen*2 + 4096, clipped to kMaxSpan by the
+  //   reader Required depth   = kScopeMargin + kMaxSpan  (i.e. the full ring -
+  //   trivial) Practical depth  = kScopeMargin + want_max  (real headroom the
+  //   UI sees)
+  //                      = 2048 + (32768*2 + 4096) = 71680 samples
+  //   Current 2^16     = 65536 -> want gets clipped to 63488, still leaves
+  //                      63488 - 32768 = 30720 samples (~700 ms at 44.1 kHz)
+  //                      for trigger search behind the view. Plenty.
+  //   To widen max H-zoom: grow kScopeBits so 2^kScopeBits >= kScopeMargin +
+  //     (new_max_viewLen * 2 + 4096). Each +1 bit doubles memory (~128 KB/ch).
+  //
+  // Marker ring (2^kMarkerBits markers, single ring for both channels):
+  //   P                = markers per analysis pass (~5 on clean sine, ~30-100
+  //                      typical, ~300-500 on saw/noise with low threshold)
+  //   display lag      ~ 5-7 passes (kScopeMargin + hop alignment)
+  //   view width       ~ viewLen / kHopSize passes  (up to 32 at max zoom)
+  //   needed depth     = (display_lag + view_passes) * P_max
+  //                      = (7 + 32) * 500 = 19500 markers  <- tight!
+  //   Current 2^14     = 16384 -> at P_max=500 we have ~32 passes depth,
+  //                      4.5x the display lag. Sufficient but not generous.
+  //   UI reads 8192 per frame; guard = cap - 64 = 16320 (so 8192 is safe).
+  //   To grow: bump kMarkerBits; each +1 bit = +128 KB of ScopeMarker[].
+  //   If you ever see markers vanish when lowering threshold on noisy
+  //   material, that's P exploding past depth budget - grow kMarkerBits.
+  // =========================================================================
+  static constexpr int kScopeBits = 16;  // 65536 samples per channel
   static constexpr size_t kScopeMask =
       (static_cast<size_t>(1) << kScopeBits) - 1;
   static constexpr size_t kScopeMargin = 2048;
@@ -92,7 +122,8 @@ private:
   std::atomic<uint64_t> scopeWriteR_{0};
   std::atomic<uint64_t> inputWrite_{0};
   std::atomic<uint64_t> inputWriteR_{0};
-  static constexpr int kMarkerBits = 14;
+  static constexpr int kMarkerBits =
+      14;  // 16384 markers (single ring, both ch)
   static constexpr size_t kMarkerMask =
       (static_cast<size_t>(1) << kMarkerBits) - 1;
   std::array<ScopeMarker, static_cast<size_t>(1) << kMarkerBits> markerRing_{};
