@@ -267,27 +267,33 @@ static constexpr float kSmoothCoeffs[kSmoothLen] = {
 
 size_t PluginProcessor::readScopeSpan(float* dst,
                                       size_t n,
-                                      uint64_t& startAbs) const {
+                                      uint64_t& startAbs,
+                                      int ch) const {
+  const auto& ring = (ch == 1) ? scopeRingR_ : scopeRing_;
+  const auto& cur = (ch == 1) ? scopeWriteR_ : scopeWrite_;
   constexpr size_t kMaxSpan =
       (static_cast<size_t>(1) << kScopeBits) - kScopeMargin;
   if (n > kMaxSpan)
     n = kMaxSpan;
-  const uint64_t w = scopeWrite_.load(std::memory_order_acquire);
+  const uint64_t w = cur.load(std::memory_order_acquire);
   if (w < static_cast<uint64_t>(kScopeMargin) + n) {
     startAbs = 0;
     return 0;
   }
   const uint64_t start = w - kScopeMargin - n;
   for (size_t i = 0; i < n; ++i)
-    dst[i] = scopeRing_[static_cast<size_t>((start + i) & kScopeMask)];
+    dst[i] = ring[static_cast<size_t>((start + i) & kScopeMask)];
   startAbs = start;
   return n;
 }
 
 size_t PluginProcessor::readInputSpanAt(float* dst,
                                         size_t n,
-                                        uint64_t startAbs) const {
-  const uint64_t w = inputWrite_.load(std::memory_order_acquire);
+                                        uint64_t startAbs,
+                                        int ch) const {
+  const auto& ring = (ch == 1) ? inputRingR_ : inputRing_;
+  const auto& cur = (ch == 1) ? inputWriteR_ : inputWrite_;
+  const uint64_t w = cur.load(std::memory_order_acquire);
   if (w < static_cast<uint64_t>(kScopeMargin) + n)
     return 0;
   const uint64_t avail = w - kScopeMargin;
@@ -295,7 +301,7 @@ size_t PluginProcessor::readInputSpanAt(float* dst,
       n > (static_cast<size_t>(1) << kScopeBits) - kScopeMargin)
     return 0;
   for (size_t i = 0; i < n; ++i)
-    dst[i] = inputRing_[static_cast<size_t>((startAbs + i) & kScopeMask)];
+    dst[i] = ring[static_cast<size_t>((startAbs + i) & kScopeMask)];
   return n;
 }
 
@@ -411,12 +417,14 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
   for (int ch = 0; ch < numChannels; ++ch) {
     const float* in = buffer.getReadPointer(ch);
     inputBuffer[ch].insert(inputBuffer[ch].end(), in, in + numSamples);
-    if (ch == 0) {  // raw input ring for the ghost trace
-      const uint64_t w = inputWrite_.load(std::memory_order_relaxed);
+    if (ch == 0 || ch == 1) {  // raw input rings for ghost traces
+      auto& ring = (ch == 0) ? inputRing_ : inputRingR_;
+      auto& cur = (ch == 0) ? inputWrite_ : inputWriteR_;
+      const uint64_t w = cur.load(std::memory_order_relaxed);
       for (int i = 0; i < numSamples; ++i)
-        inputRing_[(w + static_cast<uint64_t>(i)) & kScopeMask] = in[i];
-      inputWrite_.store(w + static_cast<uint64_t>(numSamples),
-                        std::memory_order_release);
+        ring[(w + static_cast<uint64_t>(i)) & kScopeMask] = in[i];
+      cur.store(w + static_cast<uint64_t>(numSamples),
+                std::memory_order_release);
     }
   }
 
@@ -433,16 +441,17 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
       const int zoneStart = prevZoneEnd[ch];  // in [0, kHopSize - 1]
       const int zoneLen = zoneEnd - zoneStart;  // in [1, kWindowSize - 1]
 
-      if (ch == 0) {  // publish analysis markers for the scope overlay
+      if (ch == 0 ||
+          ch == 1) {  // publish analysis markers for the scope overlay
         uint64_t mw = markerWrite_.load(std::memory_order_relaxed);
         for (const int idx : extrema_) {
-          markerRing_[mw & kMarkerMask] =
-              ScopeMarker{winAbs + static_cast<uint64_t>(idx) + kWindowSize, 0};
+          markerRing_[mw & kMarkerMask] = ScopeMarker{
+              winAbs + static_cast<uint64_t>(idx) + kWindowSize, 0, ch};
           ++mw;
         }
         if (zoneEnd == kWindowSize - 1 && !windowSilent_) {  // fallback seam
           markerRing_[mw & kMarkerMask] = ScopeMarker{
-              winAbs + static_cast<uint64_t>(zoneEnd) + kWindowSize, 1};
+              winAbs + static_cast<uint64_t>(zoneEnd) + kWindowSize, 1, ch};
           ++mw;
         }
         markerWrite_.store(mw, std::memory_order_release);
@@ -479,13 +488,15 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     for (int i = toOutput; i < numSamples; ++i)
       out[i] = 0.0f;
 
-    // Feed the scope display ring (ch0 only; UI reads it lock-free)
-    if (ch == 0 && toOutput > 0) {
-      const uint64_t w = scopeWrite_.load(std::memory_order_relaxed);
+    if ((ch == 0 || ch == 1) &&
+        toOutput > 0) {  // feed the scope display rings (per channel), UI reads
+                         // it lock-free
+      auto& ring = (ch == 0) ? scopeRing_ : scopeRingR_;
+      auto& cur = (ch == 0) ? scopeWrite_ : scopeWriteR_;
+      const uint64_t w = cur.load(std::memory_order_relaxed);
       for (int i = 0; i < toOutput; ++i)
-        scopeRing_[(w + static_cast<uint64_t>(i)) & kScopeMask] = out[i];
-      scopeWrite_.store(w + static_cast<uint64_t>(toOutput),
-                        std::memory_order_release);
+        ring[(w + static_cast<uint64_t>(i)) & kScopeMask] = out[i];
+      cur.store(w + static_cast<uint64_t>(toOutput), std::memory_order_release);
     }
 
     if (toOutput > 0)

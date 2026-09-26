@@ -3,10 +3,11 @@
 #include <vector>
 
 namespace audio_plugin {
-// Scope overlay marker: ring position (output stream index) + kind
+// Scope overlay marker: ring position (output stream index) + kind + ch
 struct ScopeMarker {
   uint64_t pos = 0;  // output stream index = input abs + kWindowSize
-  int kind = 0;      // 0 = kept extremum, 1 = fallback seam (no extremum found)
+  int kind = 0;      // 0 = kept extremum, 1 = fallback seam
+  int ch = 0;        // 0 = L, 1 = R
 };
 
 class PluginProcessor : public juce::AudioProcessor {
@@ -45,13 +46,11 @@ public:
 
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
 
-  // Scope data accessors (UI thread). Processed ch0 history ends kScopeMargin
-  // before the write cursor; startAbs returns the ring position of dst[0].
-  size_t readScopeSpan(float* dst, size_t n, uint64_t& startAbs) const;
-  // Raw ch0 history at exact ring positions [startAbs, startAbs+n): used to
-  // overlay the input aligned through the constant latency.
-  size_t readInputSpanAt(float* dst, size_t n, uint64_t startAbs) const;
-  // Most recent markers (extrema / fallback seams), newest last.
+  // Scope data accessors (UI thread), per channel. Processed history ends
+  // kScopeMargin before the write cursor; startAbs returns ring pos of dst[0].
+  size_t readScopeSpan(float* dst, size_t n, uint64_t& startAbs, int ch) const;
+  // Raw history at exact ring positions [startAbs, startAbs+n), per channel.
+  size_t readInputSpanAt(float* dst, size_t n, uint64_t startAbs, int ch) const;
   size_t readMarkerSpan(ScopeMarker* dst, size_t n) const;
 
 private:
@@ -80,16 +79,20 @@ private:
   std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
   float warpEval(float t) const;
 
-  // Scope rings: processed and raw ch0, plus analysis markers
+  // Scope rings: processed and raw, per channel, plus analysis markers
   static constexpr int kScopeBits = 16;
   static constexpr size_t kScopeMask =
       (static_cast<size_t>(1) << kScopeBits) - 1;
   static constexpr size_t kScopeMargin = 2048;
   std::array<float, static_cast<size_t>(1) << kScopeBits> scopeRing_{};
+  std::array<float, static_cast<size_t>(1) << kScopeBits> scopeRingR_{};
   std::array<float, static_cast<size_t>(1) << kScopeBits> inputRing_{};
+  std::array<float, static_cast<size_t>(1) << kScopeBits> inputRingR_{};
   std::atomic<uint64_t> scopeWrite_{0};
+  std::atomic<uint64_t> scopeWriteR_{0};
   std::atomic<uint64_t> inputWrite_{0};
-  static constexpr int kMarkerBits = 13;
+  std::atomic<uint64_t> inputWriteR_{0};
+  static constexpr int kMarkerBits = 14;
   static constexpr size_t kMarkerMask =
       (static_cast<size_t>(1) << kMarkerBits) - 1;
   std::array<ScopeMarker, static_cast<size_t>(1) << kMarkerBits> markerRing_{};
