@@ -194,21 +194,6 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
     g.setColour(ui::fillL);
     g.fillPath(fill);
   }
-  // Control polygon + hollow C marker of the hovered/dragged segment
-  const int activeSeg = grab_ == Kind::handle
-                            ? grabIndex_
-                            : (hover_.kind == Kind::handle ? hover_.index : -1);
-  if (activeSeg >= 0) {
-    const auto a = toUI(curve_.point(activeSeg));
-    const auto c = toUI(curve_.control(activeSeg));
-    const auto b = toUI(curve_.point(activeSeg + 1));
-    g.setColour(ui::handle.withAlpha(0.35f));
-    g.drawLine({a, c});
-    g.drawLine({c, b});
-    g.setColour(ui::handle.withAlpha(0.6f));
-    g.drawEllipse(c.x - kCtrlR, c.y - kCtrlR, kCtrlR * 2.0f, kCtrlR * 2.0f,
-                  ui::ghostW);
-  }
   // Glow + stroke
   g.setColour(ui::glowL);
   g.strokePath(curve, juce::PathStrokeType(ui::glowW,
