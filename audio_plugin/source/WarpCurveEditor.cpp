@@ -7,6 +7,11 @@ constexpr float kHandleR = 4.0f;
 constexpr float kHandleRHot = 5.5f;
 constexpr float kEndR = 4.5f;
 constexpr float kCtrlR = 2.5f;
+
+constexpr float kSnapStep = 0.05f;  // Alt-snap grid; includes drawn quarters
+float snapped(float v) {
+  return std::round(v / kSnapStep) * kSnapStep + 0.0f;  // fold -0.0 to +0.0
+}
 }  // namespace
 
 WarpCurveEditor::WarpCurveEditor(WarpCurve& curve,
@@ -89,7 +94,9 @@ void WarpCurveEditor::notify() {
   repaint();
 }
 
-void WarpCurveEditor::timerCallback() { repaint(); }
+void WarpCurveEditor::timerCallback() {
+  repaint();
+}
 
 void WarpCurveEditor::mouseDown(const juce::MouseEvent& e) {
   const auto hit = hitTest(e.position);
@@ -107,11 +114,14 @@ void WarpCurveEditor::mouseDown(const juce::MouseEvent& e) {
 void WarpCurveEditor::mouseDrag(const juce::MouseEvent& e) {
   if (grab_ == Kind::none)
     return;
+  auto n = fromUI(e.position + grabOffset_);  // no jump on grab
+  if (e.mods.isAltDown()) {
+    n.x = snapped(n.x);
+    n.y = snapped(n.y);
+  }
   if (grab_ == Kind::point) {
-    const auto n = fromUI(e.position + grabOffset_);  // no jump on grab
     curve_.movePoint(grabIndex_, n.x, n.y);
   } else {
-    auto n = fromUI(e.position + grabOffset_);
     if (e.mods.isShiftDown())
       n.x = lockedHandleX_;  // Serum-style vertical-only bend
     curve_.moveHandle(grabIndex_, n.x, n.y);
@@ -129,8 +139,9 @@ void WarpCurveEditor::mouseMove(const juce::MouseEvent& e) {
   const auto h = hitTest(e.position);
   if (h.kind != hover_.kind || h.index != hover_.index) {
     hover_ = h;
-    setMouseCursor(h.kind == Kind::none ? juce::MouseCursor::NormalCursor
-                                        : juce::MouseCursor::PointingHandCursor);
+    setMouseCursor(h.kind == Kind::none
+                       ? juce::MouseCursor::NormalCursor
+                       : juce::MouseCursor::PointingHandCursor);
     repaint();
   }
 }
@@ -142,8 +153,10 @@ void WarpCurveEditor::mouseDoubleClick(const juce::MouseEvent& e) {
       notify();
     return;
   }
-  if (curveRect().contains(e.position) &&  // double-click on empty adds one
-      curve_.addPoint(fromUI(e.position).x) >= 0)
+  auto pos = fromUI(e.position);
+  if (e.mods.isAltDown())
+    pos.x = snapped(pos.x);
+  if (curveRect().contains(e.position) && curve_.addPoint(pos.x) >= 0)
     notify();
 }
 
@@ -172,14 +185,29 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
     g.drawLine({r.getX(), r.getBottom() - f * r.getHeight(), r.getRight(),
                 r.getBottom() - f * r.getHeight()});
   }
+  // Finer grid
+  if (juce::ModifierKeys::getCurrentModifiers().isAltDown()) {
+    const juce::Colour fine{0x0cffffff};  // fainter than the quarter grid
+    g.setColour(fine);
+    for (int i = 1; i < 20; ++i) {
+      if (i % 5 == 0)
+        continue;  // quarters are already drawn
+      const float f = static_cast<float>(i) * kSnapStep;
+      g.drawLine({r.getX() + f * r.getWidth(), r.getY(),
+                  r.getX() + f * r.getWidth(), r.getBottom()});
+      g.drawLine({r.getX(), r.getBottom() - f * r.getHeight(), r.getRight(),
+                  r.getBottom() - f * r.getHeight()});
+    }
+  }
   // Identity diagonal, dashed hairline
   g.setColour(ui::diag);
   for (int i = 0; i < 24; i += 2) {
     const float t0 = static_cast<float>(i) / 24.0f;
     const float t1 = static_cast<float>(i + 1) / 24.0f;
-    g.drawLine({r.getX() + t0 * r.getWidth(), r.getBottom() - t0 * r.getHeight(),
-                r.getX() + t1 * r.getWidth(), r.getBottom() - t1 * r.getHeight()},
-               1.0f);
+    g.drawLine(
+        {r.getX() + t0 * r.getWidth(), r.getBottom() - t0 * r.getHeight(),
+         r.getX() + t1 * r.getWidth(), r.getBottom() - t1 * r.getHeight()},
+        1.0f);
   }
   // Curve as exact quadratic Beziers (same math as the DSP LUT)
   juce::Path curve;
@@ -196,13 +224,13 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
   }
   // Glow + stroke
   g.setColour(ui::glowL);
-  g.strokePath(curve, juce::PathStrokeType(ui::glowW,
-                                           juce::PathStrokeType::curved,
-                                           juce::PathStrokeType::rounded));
+  g.strokePath(curve,
+               juce::PathStrokeType(ui::glowW, juce::PathStrokeType::curved,
+                                    juce::PathStrokeType::rounded));
   g.setColour(ui::accentL);
-  g.strokePath(curve, juce::PathStrokeType(ui::curveW,
-                                           juce::PathStrokeType::curved,
-                                           juce::PathStrokeType::rounded));
+  g.strokePath(curve,
+               juce::PathStrokeType(ui::curveW, juce::PathStrokeType::curved,
+                                    juce::PathStrokeType::rounded));
   // On-curve handles: the dots the user actually drags
   for (int s = 0; s < curve_.numSegments(); ++s) {
     const bool hot = (hover_.kind == Kind::handle && hover_.index == s) ||
@@ -236,6 +264,24 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
     g.fillEllipse(p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
     g.setColour(ui::textHi);
     g.drawEllipse(p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f, ui::thinW);
+  }
+  // Live coordinate readout while dragging
+  if (grab_ != Kind::none && grabIndex_ >= 0) {
+    const auto v = (grab_ == Kind::point) ? curve_.point(grabIndex_)
+                                          : curve_.handleNode(grabIndex_);
+    // +0.0f folds IEEE negative zero onto +0.0: the readout must never
+    // show "-0.00" (snap/round near an edge can produce -0.0, and jlimit
+    // lets it through because -0.0 == 0.0 compares equal).
+    const float rx = v.x + 0.0f;
+    const float ry = v.y + 0.0f;
+    const auto txt = juce::String(rx, 2) + " / " + juce::String(ry, 2);
+    auto box = bounds.reduced(6.0f).withHeight(14.0f);  // top-left strip
+    box = box.withWidth(48.0f);
+    g.setColour(ui::panel.withAlpha(0.75f));
+    g.fillRoundedRectangle(box, 3.0f);
+    g.setColour(ui::text);
+    g.setFont(juce::Font(juce::FontOptions().withHeight(ui::fontTiny)));
+    g.drawText(txt, box, juce::Justification::centred, false);
   }
 }
 
