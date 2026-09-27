@@ -2,30 +2,6 @@
 
 namespace audio_plugin {
 namespace {
-// Scope-prefixed: unity build merges anonymous namespaces across .cpp files
-const juce::Colour kScopeBg{0xff101218};
-const juce::Colour kScopeFrame{0x808a93a6};
-const juce::Colour kScopeGrid{0x14ffffff};
-const juce::Colour kScopeZero{0x33ffffff};
-const juce::Colour kScopeTraceL{0xff4f7dff};
-const juce::Colour kScopeTraceR{0xffffb454};  // colorblind-safe vs blue
-const juce::Colour kScopeGhost{0x38e8ecf5};
-const juce::Colour kScopeText{0x99e8ecf5};
-const juce::Colour kScopeMarkExtL{0xff5aa2ff};
-const juce::Colour kScopeMarkExtR{0xffffc078};
-const juce::Colour kScopeMarkFall{0xffe5484d};
-const juce::Colour kScopeDelta{0x1f4f7dff};
-const juce::Colour kScopeDeltaR{0x1fffb454};  // R channel delta fill
-const juce::Colour kScopeMono{0xff5a6472};
-constexpr int kScopeStripH = 24;
-
-juce::Colour traceColour(int ch) {
-  return ch == 0 ? kScopeTraceL : kScopeTraceR;
-}
-juce::Colour extColour(int ch) {
-  return ch == 0 ? kScopeMarkExtL : kScopeMarkExtR;
-}
-
 int niceDiv(int viewLen) {
   const float target = static_cast<float>(viewLen) / 6.0f;
   float best = 1.0f;
@@ -119,11 +95,11 @@ void ScopeView::SmChip::setTint(juce::Colour c) {
 void ScopeView::SmChip::paint(juce::Graphics& g) {
   const auto r = getLocalBounds().toFloat();
   g.setColour(tint_.withAlpha(0.30f));
-  g.fillRoundedRectangle(r, 4.0f);
+  g.fillRoundedRectangle(r, ui::cornerSm);
   g.setColour(tint_.withAlpha(0.85f));
-  g.drawRoundedRectangle(r, 4.0f, 1.0f);
-  g.setColour(kScopeText);
-  g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+  g.drawRoundedRectangle(r, ui::cornerSm, 1.0f);
+  g.setColour(ui::text);
+  g.setFont(juce::Font(juce::FontOptions().withHeight(ui::fontChip)));
   g.drawText(text_, getLocalBounds(), juce::Justification::centred, false);
 }
 
@@ -137,7 +113,7 @@ juce::String ScopeView::SmChip::getTooltip() {
 
 juce::Rectangle<float> ScopeView::traceRect() const {
   auto r = getLocalBounds().toFloat();
-  return r.withTop(r.getY() + kScopeStripH).reduced(2.0f);
+  return r.withTop(r.getY() + ui::stripH).reduced(2.0f);
 }
 
 juce::Rectangle<float> ScopeView::laneRect(int ch) const {
@@ -146,13 +122,15 @@ juce::Rectangle<float> ScopeView::laneRect(int ch) const {
     return full;
   const float half = full.getHeight() * 0.5f;
   if (ch == 0)
-    return full.withHeight(half - 3.0f);
-  return full.withY(full.getY() + half + 3.0f).withHeight(half - 3.0f);
+    return full.withHeight(half - ui::laneGap);
+  return full.withY(full.getY() + half + ui::laneGap)
+      .withHeight(half - ui::laneGap);
 }
 
 int ScopeView::primaryChannel() const {
   return (chanMode_ == 1 && hasR_) ? 1 : 0;
 }
+
 bool ScopeView::channelActive(int ch) const {
   return stereo_ ? true : ch == prim_;
 }
@@ -161,22 +139,24 @@ int ScopeView::lenFromH(double t) const {
   return juce::jlimit(256, 32768,
                       juce::roundToInt(256.0 * std::pow(128.0, t / 1000.0)));
 }
+
 double ScopeView::hFromLen(int len) const {
-  return 1000.0 * std::log(static_cast<double>(len) / 256.0) / std::log(128.0);
+  return 1000.0 * std::log(static_cast<double>(len) / 256.0) /
+         std::log(128.0);
 }
 
 void ScopeView::resized() {
-  auto strip = getLocalBounds().removeFromTop(kScopeStripH).reduced(2);
+  auto strip = getLocalBounds().removeFromTop(ui::stripH).reduced(2);
   trackBtn_.setBounds(strip.removeFromLeft(112));
-  strip.removeFromLeft(6);
+  strip.removeFromLeft(ui::stripGap);
   chanBtn_.setBounds(strip.removeFromLeft(58));
-  strip.removeFromLeft(6);
+  strip.removeFromLeft(ui::stripGap);
   auto chipRect = strip.removeFromLeft(78);
-  smChip_.setBounds(chipRect.withSizeKeepingCentre(chipRect.getWidth(),
-                                                   chipRect.getHeight() - 6));
-  strip.removeFromLeft(6);
+  smChip_.setBounds(chipRect.withSizeKeepingCentre(
+      chipRect.getWidth(), chipRect.getHeight() - ui::stripGap));
+  strip.removeFromLeft(ui::stripGap);
   vZoom_.setBounds(strip.removeFromLeft(80));
-  strip.removeFromLeft(6);
+  strip.removeFromLeft(ui::stripGap);
   hZoom_.setBounds(strip.removeFromLeft(130));
   strip.removeFromLeft(10);
   readoutRect_ = strip.toFloat();
@@ -235,13 +215,13 @@ void ScopeView::updateSmMetric() {
     m2 += static_cast<double>(mm) * mm;
     s2 += static_cast<double>(ss) * ss;
   }
-  smDb_ =
-      (m2 > 1e-12) ? static_cast<float>(10.0 * std::log10(s2 / m2)) : -120.0f;
+  smDb_ = (m2 > 1e-12) ? static_cast<float>(10.0 * std::log10(s2 / m2))
+                       : -120.0f;
 }
 
 void ScopeView::updateSmChip() {
   juce::String txt;
-  juce::Colour col = kScopeMono;
+  juce::Colour col = ui::chipIdle;
   if (!hasR_ || smDb_ < -40.0f) {
     txt = "S/M: MONO";
   } else {
@@ -249,9 +229,9 @@ void ScopeView::updateSmChip() {
           juce::String(static_cast<int>(juce::jlimit(-99.0f, 99.0f, smDb_))) +
           "dB";
     if (smDb_ > -10.0f)
-      col = kScopeTraceR;  // wide: light up in the R hue
+      col = ui::accentR;  // wide: light up in the R hue
     else
-      col = kScopeMono.brighter(0.2f);
+      col = ui::chipIdle.brighter(0.2f);
   }
   smChip_.setText(txt);
   smChip_.setTint(col);
@@ -455,7 +435,7 @@ void ScopeView::drawDbGrid(juce::Graphics& g,
                            const juce::Rectangle<float>& r,
                            float scale) const {
   const float cy = r.getCentreY();
-  g.setColour(kScopeZero);
+  g.setColour(ui::zero);
   g.drawLine({r.getX(), cy, r.getRight(), cy});
 
   struct DbLine {
@@ -469,43 +449,46 @@ void ScopeView::drawDbGrid(juce::Graphics& g,
       const float y = cy - sgn * a;
       if (y < r.getY() + 1.0f || y > r.getBottom() - 1.0f)
         continue;
-      if (std::abs(y - cy) < 12.0f)
+      if (std::abs(y - cy) < ui::lineBoxH)
         continue;  // hugs the zero line: nothing to label there
       dbLines.add({y, db});
     }
   }
   std::sort(dbLines.begin(), dbLines.end(),
             [](const DbLine& a, const DbLine& b) { return a.y < b.y; });
-  constexpr float kMinDbGap = 18.0f;
+  constexpr float kMinDbGap = 18.0f;  // = lineBoxH + 6: labels never collide
   float lastY = -1.0e9f;
-  const auto smallFont = juce::Font(juce::FontOptions().withHeight(10.0f));
+  const auto smallFont =
+      juce::Font(juce::FontOptions().withHeight(ui::fontSmall));
   g.setFont(smallFont);
   for (const auto& L : dbLines) {
     if (L.y - lastY < kMinDbGap)
       continue;
     lastY = L.y;
-    g.setColour(L.db == 0 ? kScopeZero : kScopeGrid);
+    g.setColour(L.db == 0 ? ui::zero : ui::grid);
     g.drawLine({r.getX(), L.y, r.getRight(), L.y});
-    g.setColour(kScopeText);
+    g.setColour(ui::text);
     const int ly = juce::jlimit(juce::roundToInt(r.getY()) + 1,
                                 juce::roundToInt(r.getBottom()) - 13,
                                 juce::roundToInt(L.y) - 12);
     g.drawText(juce::String(L.db) + " dB", juce::roundToInt(r.getX()) + 2, ly,
-               52, 12, juce::Justification::left, false);
+               52, juce::roundToInt(ui::lineBoxH),
+               juce::Justification::left, false);
   }
 }
 
 void ScopeView::paint(juce::Graphics& g) {
   const auto bounds = getLocalBounds().toFloat();
-  g.fillAll(kScopeBg);
-  g.setColour(kScopeFrame);
-  g.drawRect(bounds, 1.5f);
+  g.fillAll(ui::scope);
+  g.setColour(ui::frame);
+  g.drawRect(bounds, ui::frameW);
 
   const auto full = traceRect();
   if (full.isEmpty())
     return;
   const double sr = proc_.getSampleRate();
-  const auto smallFont = juce::Font(juce::FontOptions().withHeight(10.0f));
+  const auto smallFont =
+      juce::Font(juce::FontOptions().withHeight(ui::fontSmall));
   g.setFont(smallFont);
   const float scale = full.getHeight() * 0.45f * vZoomGain_;
   const bool split = stereo_ && chanMode_ == 3;
@@ -517,18 +500,20 @@ void ScopeView::paint(juce::Graphics& g) {
         full.getRight() - static_cast<float>(ago) * full.getWidth() / viewLen_;
     if (x < full.getX() - 0.5f)
       break;
-    g.setColour(ago == 0 ? kScopeZero : kScopeGrid);
+    g.setColour(ago == 0 ? ui::zero : ui::grid);
     g.drawLine({x, full.getY(), x, full.getBottom()});
-    const bool inGutter = x < full.getX() + 58.0f;  // left column = dB labels
+    const bool inGutter = x < full.getX() + ui::gutterL;  // left col = dB
     if (!inGutter) {
-      g.setColour(kScopeText);
+      g.setColour(ui::text);
       g.drawText(juce::String(ago), juce::roundToInt(x) + 2,
-                 juce::roundToInt(full.getY()) + 2, 64, 12,
+                 juce::roundToInt(full.getY()) + 2, 64,
+                 juce::roundToInt(ui::lineBoxH),
                  juce::Justification::left, false);
       if (sr > 0.0 && ago > 0)
         g.drawText(juce::String(1000.0 * ago / sr, 2) + "ms",
                    juce::roundToInt(x) + 2,
-                   juce::roundToInt(full.getBottom()) - 14, 72, 12,
+                   juce::roundToInt(full.getBottom()) - 14, 72,
+                   juce::roundToInt(ui::lineBoxH),
                    juce::Justification::left, false);
     }
   }
@@ -546,15 +531,15 @@ void ScopeView::paint(juce::Graphics& g) {
     g.saveState();
     g.reduceClipRegion(r.toNearestInt());
     if (inN_[ch] > 0) {
-      g.setColour(ch == 0 ? kScopeDelta : kScopeDeltaR);
+      g.setColour(ui::fillOf(ch));
       g.fillPath(deltaPath_[ch]);
-      g.setColour(kScopeGhost);
-      g.strokePath(inPath_[ch], juce::PathStrokeType(1.2f));
+      g.setColour(ui::ghost);
+      g.strokePath(inPath_[ch], juce::PathStrokeType(ui::ghostW));
     }
     for (int i = std::min(trailN_[ch], 3) - 1; i >= 0; --i) {
       const float alpha = (i == 0) ? 1.0f : (i == 1 ? 0.35f : 0.15f);
-      g.setColour(traceColour(ch).withAlpha(alpha));
-      g.strokePath(trail_[ch][i], juce::PathStrokeType(1.6f));
+      g.setColour(ui::traceOf(ch).withAlpha(alpha));
+      g.strokePath(trail_[ch][i], juce::PathStrokeType(ui::thinW));
     }
     // Markers of this channel, positioned on its own trace/lane
     const uint64_t viewAbs = spanStart_[ch] + static_cast<uint64_t>(viewStart_);
@@ -567,14 +552,17 @@ void ScopeView::paint(juce::Graphics& g) {
           mk.pos >= viewAbs + static_cast<uint64_t>(viewLen_))
         continue;
       const int p = static_cast<int>(mk.pos - viewAbs);
-      const float x = r.getX() + (static_cast<float>(p) + 0.5f) * r.getWidth() /
+      const float x = r.getX() + (static_cast<float>(p) + 0.5f) *
+                                     r.getWidth() /
                                      static_cast<float>(viewLen_);
       const float v = span_[ch][static_cast<size_t>(viewStart_ + p)];
       const float y = cy - v * scale;
-      g.setColour(mk.kind == 0 ? extColour(ch) : kScopeMarkFall);
-      g.fillEllipse(x - 3.5f, y - 3.5f, 7.0f, 7.0f);
-      g.setColour(kScopeBg.withAlpha(0.85f));
-      g.fillEllipse(x - 1.2f, y - 1.2f, 2.4f, 2.4f);
+      g.setColour(mk.kind == 0 ? ui::markOf(ch) : ui::markFall);
+      g.fillEllipse(x - ui::dotR, y - ui::dotR, ui::dotR * 2.0f,
+                    ui::dotR * 2.0f);
+      g.setColour(ui::scope.withAlpha(0.85f));
+      g.fillEllipse(x - ui::dotHoleR, y - ui::dotHoleR, ui::dotHoleR * 2.0f,
+                    ui::dotHoleR * 2.0f);
     }
     g.restoreState();
   }
@@ -585,13 +573,15 @@ void ScopeView::paint(juce::Graphics& g) {
       continue;
     const int pos = stereo_ ? ch : 1;  // single chip hugs the right edge
     const float x =
-        full.getRight() - 22.0f - 26.0f * static_cast<float>(1 - pos);
-    g.setColour(traceColour(ch));
-    g.fillRoundedRectangle(x, full.getY() + 3.0f, 12.0f, 12.0f, 3.0f);
-    g.setColour(kScopeBg);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        full.getRight() - 22.0f - ui::chipStep * static_cast<float>(1 - pos);
+    g.setColour(ui::traceOf(ch));
+    g.fillRoundedRectangle(x, full.getY() + 3.0f, ui::chipSize, ui::chipSize,
+                           ui::cornerSm);
+    g.setColour(ui::scope);
+    g.setFont(juce::Font(juce::FontOptions().withHeight(ui::fontTiny)));
     g.drawText(ch == 0 ? "L" : "R", juce::roundToInt(x),
-               juce::roundToInt(full.getY()) + 3, 12, 12,
+               juce::roundToInt(full.getY()) + 3,
+               juce::roundToInt(ui::chipSize), juce::roundToInt(ui::chipSize),
                juce::Justification::centred, false);
   }
   g.setFont(smallFont);
@@ -602,7 +592,7 @@ void ScopeView::paint(juce::Graphics& g) {
     if (sr > 0.0)
       txt += "  |  " + juce::String(1000.0 * viewLen_ / sr, 1) + " ms  |  " +
              juce::String(sr / viewLen_, 1) + " Hz";
-    g.setColour(kScopeText);
+    g.setColour(ui::text);
     g.drawText(txt, readoutRect_.toNearestInt(),
                juce::Justification::centredLeft);
   }

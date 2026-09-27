@@ -21,6 +21,7 @@ END_JUCE_MODULE_DECLARATION
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "include/UiTokens.h"
 #include "include/WarpCurve.h"
 #include "include/WarpCurveEditor.h"
 #include "include/ScopeView.h"
