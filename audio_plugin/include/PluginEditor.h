@@ -1,7 +1,7 @@
 #pragma once
 
 namespace audio_plugin {
-class PluginEditor : public juce::AudioProcessorEditor {
+class PluginEditor : public juce::AudioProcessorEditor, private juce::Timer {
 public:
   explicit PluginEditor(PluginProcessor&);
 
@@ -28,6 +28,8 @@ private:
   };
 
   void placeKnob(juce::Label& lab, juce::Slider& sl, juce::Rectangle<int> col);
+  void timerCallback() override;  // syncs the fold toggle with curve state
+  void syncFoldToggle();
 
   PluginProcessor& processorRef;
 
@@ -35,6 +37,7 @@ private:
 
   juce::Slider driveSlider, thresholdSlider, smoothSlider;
   juce::Label driveLabel, warpLabel, thresholdLabel, smoothLabel;
+  juce::TextButton foldToggle_{"FOLD: OFF"};
   WarpCurveEditor warpEditor;
   ScopeView scopeView;
 

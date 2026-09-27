@@ -79,6 +79,11 @@ private:
   std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
   float warpEval(float t) const;
 
+  bool warpLutFolded() const;  // true if the baked LUT is non-monotonic
+  bool lutFolded_ = false;
+  // 2x oversampling scratch for the fold nonlinearity
+  std::vector<float> osS_, osW_, osWm_;
+
   // =========================================================================
   // Scope / marker ring sizing (edit together, don't change one alone)
   //

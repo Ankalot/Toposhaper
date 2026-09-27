@@ -25,11 +25,26 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   addAndMakeVisible(warpEditor);
   addAndMakeVisible(scopeView);
 
+  // Fold-mode toggle next to the DEFORMATION title: flips the curve's
+  // monotonic lock (WarpCurve::setMonotonicLock) and republishes to audio
+  foldToggle_.setTooltip(
+      "Monotonic lock. ON = curve stays monotone (topology preserved). "
+      "OFF = free folding: non-monotone warp, 2x oversampled. "
+      "Endpoints stay pinned in both modes.");
+  foldToggle_.onClick = [this] {
+    auto& w = processorRef.warp();
+    w.setMonotonicLock(!w.monotonicLock());
+    processorRef.warpEdited();  // rebake LUT on the audio thread
+    syncFoldToggle();
+  };
+  addAndMakeVisible(foldToggle_);
+  startTimerHz(10);  // catch external state/preset loads
+  syncFoldToggle();
+
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveSlider);
-  thresholdAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
-                                                    "threshold",
-                                                    thresholdSlider);
+  thresholdAtt = std::make_unique<SliderAttachment>(
+      processorRef.parameters(), "threshold", thresholdSlider);
   smoothAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                  "smooth_mix", smoothSlider);
   driveSlider.setTooltip(
@@ -56,6 +71,21 @@ void PluginEditor::placeKnob(juce::Label& lab,
   sl.setBounds(r);
 }
 
+void PluginEditor::timerCallback() {
+  syncFoldToggle();
+}
+
+void PluginEditor::syncFoldToggle() {
+  const bool locked = processorRef.warp().monotonicLock();
+  const juce::String t = locked ? "FOLD: OFF" : "FOLD: ON";
+  if (foldToggle_.getButtonText() != t)
+    foldToggle_.setButtonText(t);
+  foldToggle_.setColour(
+      juce::TextButton::buttonColourId,
+      locked ? juce::Colour(0x00000000) : ui::accentR.withAlpha(0.30f));
+  foldToggle_.setColour(juce::TextButton::textColourOnId, ui::text);
+}
+
 void PluginEditor::paint(juce::Graphics& g) {
   g.fillAll(
       getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
@@ -78,9 +108,14 @@ void PluginEditor::resized() {
   top.removeFromLeft(gap);
   auto c3 = top;
   placeKnob(driveLabel, driveSlider, c0);
-  {  // warp column: title + always-square editor
+  {  // warp column: title + fold toggle + always-square editor
     auto r = c1;
-    warpLabel.setBounds(r.removeFromTop(ui::labelH));
+    auto title = r.removeFromTop(ui::labelH);
+    auto foldRect = title.removeFromRight(72);
+    foldRect = foldRect.withSizeKeepingCentre(foldRect.getWidth(), 16);
+    title.removeFromRight(4);
+    warpLabel.setBounds(title);
+    foldToggle_.setBounds(foldRect);
     const int side = std::min(r.getWidth(), r.getHeight());
     warpEditor.setBounds(r.withSizeKeepingCentre(side, side));
   }

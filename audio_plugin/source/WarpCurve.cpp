@@ -59,8 +59,9 @@ bool WarpCurve::movePoint(int i, float x, float y) {
   Node& p = pts_[static_cast<size_t>(i)];
   p.x = juce::jlimit(pts_[static_cast<size_t>(i) - 1].x,
                      pts_[static_cast<size_t>(i) + 1].x, x);
-  p.y = juce::jlimit(pts_[static_cast<size_t>(i) - 1].y,
-                     pts_[static_cast<size_t>(i) + 1].y, y);
+  p.y = monotonicLock_ ? juce::jlimit(pts_[static_cast<size_t>(i) - 1].y,
+                                      pts_[static_cast<size_t>(i) + 1].y, y)
+                       : clamp01(y);  // fold: free node height in [0,1]
   for (int s : {i - 1, i}) {  // keep neighbouring C inside the new boxes
     if (s < 0 || s >= numSegments())
       continue;
@@ -68,7 +69,7 @@ bool WarpCurve::movePoint(int i, float x, float y) {
     const Node& b = pts_[static_cast<size_t>(s) + 1];
     Node& c = hnd_[static_cast<size_t>(s)];
     c.x = juce::jlimit(a.x, b.x, c.x);
-    c.y = juce::jlimit(a.y, b.y, c.y);
+    c.y = clampCy(s, c.y);
   }
   return true;
 }
@@ -81,7 +82,7 @@ bool WarpCurve::moveHandle(int s, float qx, float qy) {
   const Node mid{0.5f * (a.x + b.x), 0.5f * (a.y + b.y)};
   Node c{2.0f * qx - mid.x, 2.0f * qy - mid.y};  // C = 2*Q - mid
   c.x = juce::jlimit(a.x, b.x, c.x);             // monotonicity guard
-  c.y = juce::jlimit(a.y, b.y, c.y);
+  c.y = clampCy(s, c.y);
   hnd_[static_cast<size_t>(s)] = c;
   return true;
 }
@@ -162,15 +163,37 @@ void WarpCurve::clampAll() {
   }
   std::sort(pts_.begin() + 1, pts_.end() - 1,
             [](const Node& a, const Node& b) { return a.x < b.x; });
-  for (size_t i = 1; i < pts_.size(); ++i)
-    pts_[i].y = std::max(pts_[i].y, pts_[i - 1].y);
+  if (monotonicLock_)
+    for (size_t i = 1; i < pts_.size(); ++i)
+      pts_[i].y = std::max(pts_[i].y, pts_[i - 1].y);
   hnd_.resize(pts_.size() - 1);
   for (int s = 0; s < numSegments(); ++s) {
     const Node& a = pts_[static_cast<size_t>(s)];
     const Node& b = pts_[static_cast<size_t>(s) + 1];
     Node& c = hnd_[static_cast<size_t>(s)];
     c.x = juce::jlimit(a.x, b.x, c.x);
-    c.y = juce::jlimit(a.y, b.y, c.y);
+    c.y = clampCy(s, c.y);
+  }
+}
+
+float WarpCurve::clampCy(int s, float y) const {
+  const Node& a = pts_[static_cast<size_t>(s)];
+  const Node& b = pts_[static_cast<size_t>(s) + 1];
+  if (monotonicLock_)
+    return juce::jlimit(a.y, b.y, y);  // monotone contract, unchanged
+  // Exact range containment: quadratic Bezier stays in [0,1] iff c.y is in
+  // these bounds (from y(t*) = a - (a-c)^2 / (a - 2c + b)).
+  const float lo = -std::sqrt(a.y * b.y);
+  const float hi = 1.0f + std::sqrt((1.0f - a.y) * (1.0f - b.y));
+  return juce::jlimit(lo, hi, y);
+}
+
+void WarpCurve::setMonotonicLock(bool on) {
+  if (on && !monotonicLock_) {
+    monotonicLock_ = true;
+    clampAll();  // monotonizes node y + returns C into segment boxes
+  } else {
+    monotonicLock_ = on;
   }
 }
 
@@ -190,6 +213,7 @@ juce::ValueTree WarpCurve::toValueTree() const {
   p.setProperty("x", pts_.back().x, nullptr);
   p.setProperty("y", pts_.back().y, nullptr);
   t.appendChild(p, nullptr);
+  t.setProperty("lock", monotonicLock_, nullptr);
   return t;
 }
 
@@ -210,6 +234,7 @@ bool WarpCurve::fromValueTree(const juce::ValueTree& v) {
   }
   pts_ = std::move(pts);
   hnd_ = std::move(hnd);
+  monotonicLock_ = static_cast<bool>(v.getProperty("lock", true));
   clampAll();
   return true;
 }

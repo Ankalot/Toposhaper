@@ -29,6 +29,9 @@ public:
 
   WarpCurve() { reset(); }
 
+  bool monotonicLock() const { return monotonicLock_; }
+  void setMonotonicLock(bool on);  // ON: re-clamps handles into segment boxes
+
   void reset();
   int numPoints() const { return static_cast<int>(pts_.size()); }
   int numSegments() const { return numPoints() - 1; }
@@ -52,6 +55,9 @@ private:
   static Node bezier(const Seg& s, float tau);
   static float solveTau(const Seg& s, float x);
   void clampAll();  // enforce invariants after bulk load
+
+  bool monotonicLock_ = true;
+  float clampCy(int s, float y) const;  // segment box (lock) or unit square
 
   std::vector<Node> pts_;  // [0]=(0,0), back=(1,1), x-sorted, y non-decreasing
   std::vector<Node> hnd_;  // stored Bezier control point per segment (in box)
