@@ -269,18 +269,18 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
   if (grab_ != Kind::none && grabIndex_ >= 0) {
     const auto v = (grab_ == Kind::point) ? curve_.point(grabIndex_)
                                           : curve_.handleNode(grabIndex_);
-    // +0.0f folds IEEE negative zero onto +0.0: the readout must never
-    // show "-0.00" (snap/round near an edge can produce -0.0, and jlimit
-    // lets it through because -0.0 == 0.0 compares equal).
     const float rx = v.x + 0.0f;
     const float ry = v.y + 0.0f;
     const auto txt = juce::String(rx, 2) + " / " + juce::String(ry, 2);
-    auto box = bounds.reduced(6.0f).withHeight(14.0f);  // top-left strip
-    box = box.withWidth(48.0f);
+    const juce::Font font{juce::FontOptions().withHeight(ui::fontTiny)};
+    g.setFont(font);
+    juce::GlyphArrangement ga;
+    ga.addLineOfText(font, txt, 0.0f, 0.0f);
+    const float tw = ga.getBoundingBox(0, txt.length(), true).getWidth();
+    auto box = bounds.reduced(6.0f).withHeight(14.0f).withWidth(tw + 10.0f);
     g.setColour(ui::panel.withAlpha(0.75f));
     g.fillRoundedRectangle(box, 3.0f);
     g.setColour(ui::text);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(ui::fontTiny)));
     g.drawText(txt, box, juce::Justification::centred, false);
   }
 }
