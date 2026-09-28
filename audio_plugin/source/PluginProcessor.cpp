@@ -567,6 +567,12 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor() {
 void PluginProcessor::getStateInformation(juce::MemoryBlock& destData) {
   auto state = apvts.copyState();
   state.appendChild(warpCurve_.toValueTree(), nullptr);
+  juce::ValueTree ui("UI");
+  ui.setProperty("viewLen", uiState_.viewLen, nullptr);
+  ui.setProperty("vExp", uiState_.vExp, nullptr);
+  ui.setProperty("chan", uiState_.chanMode, nullptr);
+  ui.setProperty("track", uiState_.track, nullptr);
+  state.appendChild(ui, nullptr);
   if (std::unique_ptr<juce::XmlElement> xml = state.createXml())
     copyXmlToBinary(*xml, destData);
 }
@@ -581,6 +587,18 @@ void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
     warpCurve_.fromValueTree(warp);
     tree.removeChild(warp, nullptr);
     warpSlot_.publish(warpCurve_);
+  }
+  auto ui = tree.getChildWithName("UI");
+  if (ui.isValid()) {
+    uiState_.viewLen = juce::jlimit(
+        256, 32768, static_cast<int>(ui.getProperty("viewLen", 2048)));
+    uiState_.vExp = juce::jlimit(
+        -2.0f, 5.0f, static_cast<float>(ui.getProperty("vExp", 0.0)));
+    uiState_.chanMode =
+        juce::jlimit(0, 3, static_cast<int>(ui.getProperty("chan", 0)));
+    uiState_.track = static_cast<bool>(ui.getProperty("track", true));
+    tree.removeChild(ui, nullptr);
+    ++uiState_.seq;  // open editors pick this up on their next timer tick
   }
   if (tree.isValid() && tree.hasType(apvts.state.getType()))
     apvts.replaceState(tree);

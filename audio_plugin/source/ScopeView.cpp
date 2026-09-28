@@ -17,7 +17,7 @@ int niceDiv(int viewLen) {
 
 ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   trackBtn_.setClickingTogglesState(true);
-  trackBtn_.setToggleState(true, juce::dontSendNotification);
+  trackBtn_.setToggleState(proc_.uiState().track, juce::dontSendNotification);
   trackBtn_.setTooltip(
       "Waveform tracking: ON = triggered (stable picture), "
       "OFF = scroll (true-time, phosphor trail). Label shows "
@@ -55,7 +55,7 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   vZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
   vZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   vZoom_.setRange(-2.0, 5.0, 0.01);  // gain = 2^v: 0.25x .. 32x
-  vZoom_.setValue(0.0, juce::dontSendNotification);
+  vZoom_.setValue(proc_.uiState().vExp, juce::dontSendNotification);
   vZoom_.setTooltip("Vertical zoom (amplitude), shared by both channels");
   vZoom_.setScrollWheelEnabled(false);
   vZoom_.onValueChange = [this] { repaint(); };
@@ -64,7 +64,8 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   hZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
   hZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   hZoom_.setRange(0.0, 1000.0, 1.0);  // 256..32768 samples, log
-  hZoom_.setValue(hFromLen(2048), juce::dontSendNotification);
+  hZoom_.setValue(hFromLen(proc_.uiState().viewLen),
+                  juce::dontSendNotification);
   hZoom_.setTooltip("Horizontal zoom: visible window 256 .. 32768 samples");
   hZoom_.setScrollWheelEnabled(false);
   hZoom_.onValueChange = [this] {
@@ -73,6 +74,8 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   };
   addAndMakeVisible(hZoom_);
 
+  chanMode_ = proc_.uiState().chanMode;
+  uiSeq_ = proc_.uiState().seq;
   setOpaque(true);
   startTimerHz(60);
   updateChanLabel();
@@ -141,8 +144,7 @@ int ScopeView::lenFromH(double t) const {
 }
 
 double ScopeView::hFromLen(int len) const {
-  return 1000.0 * std::log(static_cast<double>(len) / 256.0) /
-         std::log(128.0);
+  return 1000.0 * std::log(static_cast<double>(len) / 256.0) / std::log(128.0);
 }
 
 void ScopeView::resized() {
@@ -178,6 +180,11 @@ void ScopeView::mouseWheelMove(const juce::MouseEvent& e,
 }
 
 void ScopeView::timerCallback() {
+  const auto& s = proc_.uiState();
+  if (s.seq != uiSeq_) {  // state restored while the editor was open
+    uiSeq_ = s.seq;
+    applyUiState();
+  }
   refresh();
   repaint();
 }
@@ -215,8 +222,8 @@ void ScopeView::updateSmMetric() {
     m2 += static_cast<double>(mm) * mm;
     s2 += static_cast<double>(ss) * ss;
   }
-  smDb_ = (m2 > 1e-12) ? static_cast<float>(10.0 * std::log10(s2 / m2))
-                       : -120.0f;
+  smDb_ =
+      (m2 > 1e-12) ? static_cast<float>(10.0 * std::log10(s2 / m2)) : -120.0f;
 }
 
 void ScopeView::updateSmChip() {
@@ -235,6 +242,25 @@ void ScopeView::updateSmChip() {
   }
   smChip_.setText(txt);
   smChip_.setTint(col);
+}
+
+void ScopeView::pushUiState() {
+  auto& s = proc_.uiState();
+  s.viewLen = lenFromH(hZoom_.getValue());
+  s.vExp = static_cast<float>(vZoom_.getValue());
+  s.chanMode = chanMode_;
+  s.track = trackBtn_.getToggleState();
+}
+
+void ScopeView::applyUiState() {
+  const auto& s = proc_.uiState();
+  hZoom_.setValue(hFromLen(s.viewLen), juce::dontSendNotification);
+  vZoom_.setValue(s.vExp, juce::dontSendNotification);
+  chanMode_ = s.chanMode;
+  trackBtn_.setToggleState(s.track, juce::dontSendNotification);
+  trailN_[0] = trailN_[1] = 0;
+  updateChanLabel();
+  updateModeLabel();
 }
 
 void ScopeView::refresh() {
@@ -312,6 +338,7 @@ void ScopeView::refresh() {
   updateModeLabel();
   updateChanLabel();
   updateSmChip();
+  pushUiState();  // keep the processor mirror fresh for getStateInformation
 }
 
 int ScopeView::findTrigger(const float* s, size_t n) const {
@@ -472,8 +499,8 @@ void ScopeView::drawDbGrid(juce::Graphics& g,
                                 juce::roundToInt(r.getBottom()) - 13,
                                 juce::roundToInt(L.y) - 12);
     g.drawText(juce::String(L.db) + " dB", juce::roundToInt(r.getX()) + 2, ly,
-               52, juce::roundToInt(ui::lineBoxH),
-               juce::Justification::left, false);
+               52, juce::roundToInt(ui::lineBoxH), juce::Justification::left,
+               false);
   }
 }
 
@@ -507,14 +534,13 @@ void ScopeView::paint(juce::Graphics& g) {
       g.setColour(ui::text);
       g.drawText(juce::String(ago), juce::roundToInt(x) + 2,
                  juce::roundToInt(full.getY()) + 2, 64,
-                 juce::roundToInt(ui::lineBoxH),
-                 juce::Justification::left, false);
+                 juce::roundToInt(ui::lineBoxH), juce::Justification::left,
+                 false);
       if (sr > 0.0 && ago > 0)
-        g.drawText(juce::String(1000.0 * ago / sr, 2) + "ms",
-                   juce::roundToInt(x) + 2,
-                   juce::roundToInt(full.getBottom()) - 14, 72,
-                   juce::roundToInt(ui::lineBoxH),
-                   juce::Justification::left, false);
+        g.drawText(
+            juce::String(1000.0 * ago / sr, 2) + "ms", juce::roundToInt(x) + 2,
+            juce::roundToInt(full.getBottom()) - 14, 72,
+            juce::roundToInt(ui::lineBoxH), juce::Justification::left, false);
     }
   }
 
@@ -552,8 +578,7 @@ void ScopeView::paint(juce::Graphics& g) {
           mk.pos >= viewAbs + static_cast<uint64_t>(viewLen_))
         continue;
       const int p = static_cast<int>(mk.pos - viewAbs);
-      const float x = r.getX() + (static_cast<float>(p) + 0.5f) *
-                                     r.getWidth() /
+      const float x = r.getX() + (static_cast<float>(p) + 0.5f) * r.getWidth() /
                                      static_cast<float>(viewLen_);
       const float v = span_[ch][static_cast<size_t>(viewStart_ + p)];
       const float y = cy - v * scale;

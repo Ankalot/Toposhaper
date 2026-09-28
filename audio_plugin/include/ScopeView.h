@@ -38,6 +38,8 @@ private:
   void updateChanLabel();
   void updateSmMetric();
   void updateSmChip();
+  void pushUiState();   // widgets -> processor mirror (each refresh)
+  void applyUiState();  // processor -> widgets (restore while open)
   void mouseWheelMove(const juce::MouseEvent&,
                       const juce::MouseWheelDetails&) override;
 
@@ -68,6 +70,7 @@ private:
   float smDb_ = -120.0f;  // side/mid energy ratio of the visible window
   juce::String smText_;
   uint32_t frame_ = 0;
+  uint32_t uiSeq_ = 0;  // last seen UiState::seq
 
   // Passive stereo-width indicator
   class SmChip : public juce::Component, public juce::TooltipClient {

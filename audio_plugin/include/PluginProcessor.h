@@ -53,6 +53,20 @@ public:
   size_t readInputSpanAt(float* dst, size_t n, uint64_t startAbs, int ch) const;
   size_t readMarkerSpan(ScopeMarker* dst, size_t n) const;
 
+  // View-only recall (scope zoom / channel / track). Never automatable and
+  // deliberately outside APVTS: presets and host automation must not touch
+  // what the user sees, only what the user hears.
+  struct UiState {
+    int viewLen = 2048;  // semantic visible window, 256..32768
+    float vExp = 0.0f;   // vertical gain exponent (-2..5)
+    int chanMode = 0;    // 0=L, 1=R, 2=overlay, 3=split
+    bool track = true;   // TRACK toggle
+    uint32_t seq = 0;    // bumped on restore so open editors re-apply
+  };
+  UiState& uiState() { return uiState_; }
+  const UiState& uiState() const { return uiState_; }
+
+private:
 private:
   // Windowing constants
   static constexpr int kWindowSize = 2048;
@@ -135,7 +149,8 @@ private:
   std::atomic<uint64_t> markerWrite_{0};
   uint64_t inputBase_ = 0;  // absolute index of inputBuffer[ch][0]
   bool windowSilent_ =
-      false;  // last analysis window was degenerate (silence/DC)
+      false;         // last analysis window was degenerate (silence/DC)
+  UiState uiState_;  // view recall mirror: editor writes, state serializes
 
   void findExtrema(const float* window);
   int findRoot(int i);
