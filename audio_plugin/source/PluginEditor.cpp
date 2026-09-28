@@ -29,8 +29,8 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   // monotonic lock (WarpCurve::setMonotonicLock) and republishes to audio
   foldToggle_.setTooltip(
       "Monotonic lock. ON = curve stays monotone (topology preserved). "
-      "OFF = free folding: non-monotone warp, 2x oversampled. "
-      "Endpoints stay pinned in both modes.");
+      "OFF = free folding: non-monotone warp. Use the OS chip for "
+      "oversampling. Endpoints stay pinned in both modes.");
   foldToggle_.onClick = [this] {
     auto& w = processorRef.warp();
     w.setMonotonicLock(!w.monotonicLock());
@@ -38,8 +38,20 @@ PluginEditor::PluginEditor(PluginProcessor& p)
     syncFoldToggle();
   };
   addAndMakeVisible(foldToggle_);
+  osBtn_.setTooltip(
+      "Oversampling: OFF / X2 / X4. "
+      "Cuts aliasing from steep or folded warp curves. Drive = 0 "
+      "always stays bit-exact passthrough.");
+  osBtn_.onClick = [this] {
+    auto* p = processorRef.parameters().getParameter("os_factor");
+    const int idx = static_cast<int>(p->getValue() * 2.0f + 0.5f);
+    p->setValueNotifyingHost(static_cast<float>((idx + 1) % 3) / 2.0f);
+    syncOsButton();
+  };
+  addAndMakeVisible(osBtn_);
   startTimerHz(10);  // catch external state/preset loads
   syncFoldToggle();
+  syncOsButton();
 
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveSlider);
@@ -73,6 +85,7 @@ void PluginEditor::placeKnob(juce::Label& lab,
 
 void PluginEditor::timerCallback() {
   syncFoldToggle();
+  syncOsButton();
 }
 
 void PluginEditor::syncFoldToggle() {
@@ -84,6 +97,17 @@ void PluginEditor::syncFoldToggle() {
       juce::TextButton::buttonColourId,
       locked ? juce::Colour(0x00000000) : ui::accentR.withAlpha(0.30f));
   foldToggle_.setColour(juce::TextButton::textColourOnId, ui::text);
+}
+
+void PluginEditor::syncOsButton() {
+  const int f = processorRef.osFactor();
+  const juce::String t = f == 2 ? "OS: X2" : (f == 4 ? "OS: X4" : "OS: OFF");
+  if (osBtn_.getButtonText() != t)
+    osBtn_.setButtonText(t);
+  osBtn_.setColour(
+      juce::TextButton::buttonColourId,
+      f > 1 ? ui::accentL.withAlpha(0.30f) : juce::Colour(0x00000000));
+  osBtn_.setColour(juce::TextButton::textColourOnId, ui::text);
 }
 
 void PluginEditor::paint(juce::Graphics& g) {
@@ -108,14 +132,18 @@ void PluginEditor::resized() {
   top.removeFromLeft(gap);
   auto c3 = top;
   placeKnob(driveLabel, driveSlider, c0);
-  {  // warp column: title + fold toggle + always-square editor
+  {  // warp column: title + centered option chips + square editor
     auto r = c1;
-    auto title = r.removeFromTop(ui::labelH);
-    auto foldRect = title.removeFromRight(72);
-    foldRect = foldRect.withSizeKeepingCentre(foldRect.getWidth(), 16);
-    title.removeFromRight(4);
-    warpLabel.setBounds(title);
-    foldToggle_.setBounds(foldRect);
+    warpLabel.setBounds(r.removeFromTop(ui::labelH));
+    auto chipRow = r.removeFromTop(16);
+    r.removeFromTop(4);
+    constexpr int kFoldW = 72, kOsW = 64, kChipGap = 4;
+    const int chipsW = kFoldW + kChipGap + kOsW;
+    auto chips = chipRow.withWidth(chipsW).withX(
+        chipRow.getX() + (chipRow.getWidth() - chipsW) / 2);
+    foldToggle_.setBounds(chips.removeFromLeft(kFoldW));
+    chips.removeFromLeft(kChipGap);
+    osBtn_.setBounds(chips.removeFromLeft(kOsW));
     const int side = std::min(r.getWidth(), r.getHeight());
     warpEditor.setBounds(r.withSizeKeepingCentre(side, side));
   }

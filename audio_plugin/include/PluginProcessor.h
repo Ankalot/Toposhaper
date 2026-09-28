@@ -45,6 +45,7 @@ public:
   void warpEdited() { warpSlot_.publish(warpCurve_); }
 
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
+  int osFactor() const;  // 1 / 2 / 4, from the os_factor choice index
 
   // Scope data accessors (UI thread), per channel. Processed history ends
   // kScopeMargin before the write cursor; startAbs returns ring pos of dst[0].
@@ -67,7 +68,6 @@ public:
   const UiState& uiState() const { return uiState_; }
 
 private:
-private:
   // Windowing constants
   static constexpr int kWindowSize = 2048;
   static constexpr int kHopSize = kWindowSize / 2;
@@ -82,6 +82,7 @@ private:
   std::atomic<float>* thresholdPtr = nullptr;
   std::atomic<float>* drivePtr = nullptr;
   std::atomic<float>* smoothMixPtr = nullptr;
+  std::atomic<float>* osPtr = nullptr;  // raw view of os_factor choice index
 
   static constexpr int kWarpLutSize = 1024;
   // Warp curve: canonical model lives on the message thread; the audio thread
@@ -93,10 +94,8 @@ private:
   std::array<float, static_cast<size_t>(kWarpLutSize)> warpLut_{};
   float warpEval(float t) const;
 
-  bool warpLutFolded() const;  // true if the baked LUT is non-monotonic
-  bool lutFolded_ = false;
-  // 2x oversampling scratch for the fold nonlinearity
-  std::vector<float> osS_, osW_, osWm_;
+  // Oversampling scratch for the warp nonlinearity: smoothed base + ping-pong
+  std::vector<float> osS_, osA_, osB_;
 
   // =========================================================================
   // Scope / marker ring sizing (edit together, don't change one alone)

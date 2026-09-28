@@ -16,6 +16,7 @@ PluginProcessor::PluginProcessor()
   thresholdPtr = apvts.getRawParameterValue("threshold");
   drivePtr = apvts.getRawParameterValue("drive");
   smoothMixPtr = apvts.getRawParameterValue("smooth_mix");
+  osPtr = apvts.getRawParameterValue("os_factor");
   warpSlot_.publish(warpCurve_);
 }
 
@@ -28,6 +29,12 @@ PluginProcessor::createParameterLayout() {
       juce::ParameterID{"drive", 1}, "Drive", 0.0f, 1.0f, 1.0f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"smooth_mix", 1}, "Smooth Mix", 0.0f, 1.0f, 0.5f));
+  layout.add(std::make_unique<juce::AudioParameterChoice>(
+      juce::ParameterID{"os_factor", 1}, "Oversampling",
+      juce::StringArray{"OFF", "X2", "X4"}, 0,
+      // Quality switch: travels in state/presets and shows in generic UI,
+      // but stays out of automation lanes and MIDI learn.
+      juce::AudioParameterChoiceAttributes().withAutomatable(false)));
   return layout;
 }
 
@@ -119,6 +126,9 @@ void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   order_.resize(kWindowSize);
   parent_.resize(kWindowSize);
   active_.resize(kWindowSize);
+  osS_.reserve(static_cast<size_t>(kWindowSize) + 2);
+  osA_.reserve(static_cast<size_t>(4 * kWindowSize) + 1);
+  osB_.reserve(static_cast<size_t>(2 * kWindowSize) + 1);
   bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
   setLatencySamples(kWindowSize);
 }
@@ -354,11 +364,11 @@ float PluginProcessor::warpEval(float t) const {
   return warpLut_[i0] * (1.0f - f) + warpLut_[i1] * f;
 }
 
-bool PluginProcessor::warpLutFolded() const {
-  for (size_t i = 1; i < warpLut_.size(); ++i)
-    if (warpLut_[i] < warpLut_[i - 1] - 1e-6f)
-      return true;
-  return false;
+int PluginProcessor::osFactor() const {
+  static constexpr int kMap[3] = {1, 2, 4};
+  const int idx = juce::jlimit(
+      0, 2, static_cast<int>(osPtr->load(std::memory_order_relaxed)));
+  return kMap[idx];
 }
 
 void PluginProcessor::deformSection(const float* window,
@@ -397,16 +407,16 @@ void PluginProcessor::deformSection(const float* window,
     return window[j];
   };
 
-  // 2x oversampling of the fold nonlinearity: warp evaluated at base samples
-  // AND midpoints, then zero-phase triangle-decimated (0.25/0.5/0.25 on the
-  // 2x grid). No added latency, anchors untouched. Engaged only when the
-  // baked LUT is actually non-monotonic and drive > 0, so monotonic defaults
-  // keep bit-exact passthrough at drive = 0.
-  if (lutFolded_ && drive > 0.0f) {
+  // Oversampling of the warp nonlinearity: engaged
+  // whenever the OS factor > 1 and drive > 0 (drive = 0 keeps bit-exact
+  // passthrough). The smoothed interior is linearly interpolated onto an
+  // Fx grid, warped there, then decimated back with cascaded zero-phase
+  // triangle filters (one stage per factor of two). Anchors stay raw, so
+  // seams remain click-free; latency and tiling are untouched.
+  const int osF = osFactor();
+  if (osF > 1 && drive > 0.0f) {
     const int L = b - a;
-    osS_.resize(static_cast<size_t>(L) + 1);
-    osW_.resize(static_cast<size_t>(L) + 1);
-    osWm_.resize(static_cast<size_t>(L));
+    osS_.resize(static_cast<size_t>(L) + 2);
     for (int j = 0; j <= L; ++j) {
       float x = window[a + j];
       if (smooth) {
@@ -417,21 +427,36 @@ void PluginProcessor::deformSection(const float* window,
       }
       osS_[static_cast<size_t>(j)] = x;
     }
+    osS_[static_cast<size_t>(L) + 1] = osS_[static_cast<size_t>(L)];  // pad
     const auto warped = [&](float v) {
       // Clipping! Theoretically this will never clip because of topology.
       const float t = juce::jlimit(0.0f, 1.0f, (v - va) / span);
       return va + ((1.0f - drive) * t + drive * warpEval(t)) * span;
     };
-    for (int j = 0; j <= L; ++j)
-      osW_[static_cast<size_t>(j)] = warped(osS_[static_cast<size_t>(j)]);
-    for (int j = 0; j < L; ++j)
-      osWm_[static_cast<size_t>(j)] =
-          warped(0.5f * (osS_[static_cast<size_t>(j)] +
-                         osS_[static_cast<size_t>(j) + 1]));
+    const size_t M = static_cast<size_t>(L) * static_cast<size_t>(osF) + 1;
+    osA_.resize(M);
+    for (size_t m = 0; m < M; ++m) {
+      const size_t j = m / static_cast<size_t>(osF);
+      const float f = static_cast<float>(m % static_cast<size_t>(osF)) /
+                      static_cast<float>(osF);
+      osA_[m] = warped(osS_[j] * (1.0f - f) + osS_[j + 1] * f);
+    }
+    // Cascaded zero-phase triangle decimation: Fx -> Fx/2 -> ... -> 1x
+    size_t cur = M;
+    for (int stage = osF; stage > 1; stage /= 2) {
+      const size_t nxt = (cur - 1) / 2 + 1;
+      osB_.resize(nxt);
+      for (size_t k = 0; k < nxt; ++k) {
+        const size_t c = 2 * k;
+        const size_t lm = (c == 0) ? 1 : c - 1;           // reflect at start
+        const size_t rp = (c + 1 < cur) ? c + 1 : c - 1;  // reflect at end
+        osB_[k] = 0.25f * osA_[lm] + 0.5f * osA_[c] + 0.25f * osA_[rp];
+      }
+      std::swap(osA_, osB_);
+      cur = nxt;
+    }
     for (int j = 1; j < L; ++j)
-      out[a + j - outOffset] = 0.25f * osWm_[static_cast<size_t>(j) - 1] +
-                               0.5f * osW_[static_cast<size_t>(j)] +
-                               0.25f * osWm_[static_cast<size_t>(j)];
+      out[a + j - outOffset] = osA_[static_cast<size_t>(j)];
     return;
   }
 
@@ -481,7 +506,6 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
   if (warpSlot_.take(snap, warpSnapSeq_)) {
     warpSnap_ = snap;
     bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
-    lutFolded_ = warpLutFolded();
   }
 
   // Step 1: append incoming samples into per-channel input buffers

@@ -30,6 +30,7 @@ private:
   void placeKnob(juce::Label& lab, juce::Slider& sl, juce::Rectangle<int> col);
   void timerCallback() override;  // syncs the fold toggle with curve state
   void syncFoldToggle();
+  void syncOsButton();
 
   PluginProcessor& processorRef;
 
@@ -38,6 +39,7 @@ private:
   juce::Slider driveSlider, thresholdSlider, smoothSlider;
   juce::Label driveLabel, warpLabel, thresholdLabel, smoothLabel;
   juce::TextButton foldToggle_{"FOLD: OFF"};
+  juce::TextButton osBtn_{"OS: OFF"};
   WarpCurveEditor warpEditor;
   ScopeView scopeView;
 
