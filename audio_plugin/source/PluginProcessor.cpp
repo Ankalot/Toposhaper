@@ -89,30 +89,37 @@ void PluginProcessor::changeProgramName(int index,
 
 void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   juce::ignoreUnused(sampleRate);
-
   for (int ch = 0; ch < kMaxChannels; ++ch) {
     inputBuffer[ch].clear();
     inputBuffer[ch].reserve(static_cast<size_t>(kWindowSize) +
                             static_cast<size_t>(samplesPerBlock));
-
     // Prefill the output FIFO with silence (it is the reported latency)
     outputBuffer[ch].assign(static_cast<size_t>(kWindowSize), 0.0f);
     outputBuffer[ch].reserve(static_cast<size_t>(2 * kWindowSize) +
                              static_cast<size_t>(samplesPerBlock));
-
     prevZoneEnd[ch] = 0;
   }
-
+  // Coherent stream restart: the buffers/FIFO above discard pending input
+  // and inject fresh latency silence, so EVERY stream cursor must restart
+  // with them. Otherwise marker positions (inputBase_ + idx + latency) and
+  // the scope/input ring positions (scopeWrite_/inputWrite_) drift apart by
+  // a constant offset - the "markers in wrong places after a sample-rate
+  // change" bug. Resetting together also clears stale old-rate scope data
+  // and markers in one shot.
+  inputBase_ = 0;
+  scopeWrite_.store(0, std::memory_order_release);
+  scopeWriteR_.store(0, std::memory_order_release);
+  inputWrite_.store(0, std::memory_order_release);
+  inputWriteR_.store(0, std::memory_order_release);
+  markerWrite_.store(0, std::memory_order_release);
+  windowSilent_ = false;
   // Preallocate analysis scratch buffers once
   extrema_.clear();
   extrema_.reserve(static_cast<size_t>(kWindowSize));
   order_.resize(kWindowSize);
   parent_.resize(kWindowSize);
   active_.resize(kWindowSize);
-
   bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
-  lutFolded_ = warpLutFolded();
-
   setLatencySamples(kWindowSize);
 }
 
