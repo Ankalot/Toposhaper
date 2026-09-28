@@ -162,6 +162,24 @@ int PluginProcessor::findRoot(int i) {
   return i;
 }
 
+// True if the run from the window edge to idx holds no interior local
+// minimum: only then is the edge sample an honest one-sided stand-in for a
+// partner that lives outside the window. If an interior min exists, the
+// merge maximum's true pairing partner is inside, the measured persistence
+// is honest, and the threshold must judge it.
+static bool edgeRunMonotone(const float* w, int n, int edge, int idx) {
+  if (edge == 0) {
+    for (int i = 1; i < idx; ++i)
+      if (w[i] < w[i - 1] && w[i] <= w[i + 1])
+        return false;
+    return true;
+  }
+  for (int i = n - 2; i > idx; --i)
+    if (w[i] < w[i + 1] && w[i] <= w[i - 1])
+      return false;
+  return true;
+}
+
 void PluginProcessor::findExtrema(const float* window) {
   extrema_.clear();
 
@@ -208,12 +226,11 @@ void PluginProcessor::findExtrema(const float* window) {
         std::swap(survivor, dying);
       const float persistence = window[idx] - window[dying];
 
-      // A component born at a window edge has its true pairing partner outside
-      // the window, so the measured persistence underestimates the real one.
-      // Treat such pairs as infinitely persistent: keep the maximum.
       const bool edgeBorn = (dying == 0) || (dying == kWindowSize - 1);
-
-      if (edgeBorn || persistence >= thresholdAbs) {
+      const bool keep = persistence >= thresholdAbs ||
+                        (edgeBorn &&
+                         edgeRunMonotone(window, kWindowSize, dying, idx));
+      if (keep) {
         extrema_.push_back(dying);
         extrema_.push_back(idx);
       }
@@ -488,19 +505,27 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
       const int zoneStart = prevZoneEnd[ch];  // in [0, kHopSize - 1]
       const int zoneLen = zoneEnd - zoneStart;  // in [1, kWindowSize - 1]
 
-      if (ch == 0 ||
-          ch == 1) {  // publish analysis markers for the scope overlay
+      if (ch == 0 || ch == 1) {  // publish exactly the anchors/seams this
+                                 // pass's zone decomposition actually used:
+                                 // markers can never orphan from the wave
         uint64_t mw = markerWrite_.load(std::memory_order_relaxed);
+        const auto push = [&mw, this, winAbs, ch](int idx, int kind) {
+          markerRing_[mw & kMarkerMask] = ScopeMarker{
+              winAbs + static_cast<uint64_t>(idx) + kWindowSize, kind, ch};
+          ++mw;
+        };
+        if (zoneStart == 0)
+          push(0, 0);  // very first anchor of the stream
         for (const int idx : extrema_) {
-          markerRing_[mw & kMarkerMask] = ScopeMarker{
-              winAbs + static_cast<uint64_t>(idx) + kWindowSize, 0, ch};
-          ++mw;
+          if (idx <= zoneStart)
+            continue;
+          if (idx >= zoneEnd)
+            break;
+          push(idx, 0);  // kept extremum that became an anchor
         }
-        if (zoneEnd == kWindowSize - 1 && !windowSilent_) {  // fallback seam
-          markerRing_[mw & kMarkerMask] = ScopeMarker{
-              winAbs + static_cast<uint64_t>(zoneEnd) + kWindowSize, 1, ch};
-          ++mw;
-        }
+        if (!(zoneEnd == kWindowSize - 1 && windowSilent_))
+          push(zoneEnd,
+               (zoneEnd == kWindowSize - 1) ? 1 : 0);  // seam / fallback seam
         markerWrite_.store(mw, std::memory_order_release);
       }
 
