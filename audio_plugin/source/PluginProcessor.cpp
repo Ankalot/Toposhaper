@@ -227,9 +227,9 @@ void PluginProcessor::findExtrema(const float* window) {
       const float persistence = window[idx] - window[dying];
 
       const bool edgeBorn = (dying == 0) || (dying == kWindowSize - 1);
-      const bool keep = persistence >= thresholdAbs ||
-                        (edgeBorn &&
-                         edgeRunMonotone(window, kWindowSize, dying, idx));
+      const bool keep =
+          persistence >= thresholdAbs ||
+          (edgeBorn && edgeRunMonotone(window, kWindowSize, dying, idx));
       if (keep) {
         extrema_.push_back(dying);
         extrema_.push_back(idx);

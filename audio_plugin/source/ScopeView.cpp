@@ -19,9 +19,9 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   trackBtn_.setClickingTogglesState(true);
   trackBtn_.setToggleState(proc_.uiState().track, juce::dontSendNotification);
   trackBtn_.setTooltip(
-      "Waveform tracking: ON = triggered (stable picture), "
-      "OFF = scroll (true-time, phosphor trail). Label shows "
-      "LOCK / FREE / OFF.");
+      "Waveform tracking: ON = triggered (stable picture), OFF = scroll "
+      "(true-time, phosphor trail). LOCK aligns each frame to the previous "
+      "one by waveform correlation. Label shows LOCK / FREE / OFF.");
   trackBtn_.onClick = [this] {
     trailN_[0] = trailN_[1] = 0;
     updateModeLabel();
@@ -303,10 +303,20 @@ void ScopeView::refresh() {
     }
   }
 
-  // Shared trigger: primary channel in single modes, L in stereo modes
+  // Shared trigger: primary channel in single modes, L in stereo modes.
+  // LOCK = newest gate crossing, refined by corrscope-style frame-to-frame
+  // alignment: among the crossings near the predicted position, take the
+  // one whose displayed window correlates best with the previous frame's
+  // window. Chords and quasi-periodic waves hold still by continuity,
+  // without any period estimation or grid.
   const bool tracking = trackBtn_.getToggleState();
   int vs = -1;
   locked_ = false;
+  if (prim_ != prevPrim_) {  // reference belongs to another channel
+    trigBuf_.clear();
+    prevVs_ = -1;
+    prevPrim_ = prim_;
+  }
   if (tracking) {
     const int t = findTrigger(span_[prim_].data(), spanN_[prim_]);
     if (t >= 0) {
@@ -314,7 +324,28 @@ void ScopeView::refresh() {
       if (vs < 0)
         vs = 0;
       locked_ = true;
+      if (!trigBuf_.empty() && prevVs_ >= 0) {
+        const uint64_t adv = spanStart_[prim_] >= prevSpanStart_
+                                 ? spanStart_[prim_] - prevSpanStart_
+                                 : 0;
+        int pred = prevVs_ - static_cast<int>(adv);
+        pred = juce::jlimit(0, static_cast<int>(spanN_[prim_]) - viewLen_, pred);
+        const int aligned = findTriggerAligned(span_[prim_].data(),
+                                               spanN_[prim_], pred,
+                                               trigWidth_ / 2);
+        if (aligned >= 0)
+          vs = aligned;
+      }
+      storeTriggerRef(span_[prim_].data(), vs, spanN_[prim_]);
+      prevVs_ = vs;
+      prevSpanStart_ = spanStart_[prim_];
+    } else {  // silence / DC: forget the reference
+      trigBuf_.clear();
+      prevVs_ = -1;
     }
+  } else {
+    trigBuf_.clear();
+    prevVs_ = -1;
   }
   if (vs < 0)
     vs = static_cast<int>(spanN_[prim_]) - viewLen_;  // FREE / SCROLL
@@ -362,6 +393,68 @@ int ScopeView::findTrigger(const float* s, size_t n) const {
     }
   }
   return best;
+}
+
+int ScopeView::findTriggerAligned(const float* s, size_t n, int center, int radius) const {
+  if (trigBuf_.empty() || trigBufNorm_ < 1e-9f)
+    return -1;
+  const int W = trigWidth_;
+  const int limit = static_cast<int>(n);
+  float peak = 0.0f;
+  for (size_t i = 0; i < n; ++i)
+    peak = std::max(peak, std::abs(s[i]));
+  if (peak < 1.0e-4f)
+    return -1;
+  const float gate = 0.05f * peak;
+  const int pre = viewLen_ * 15 / 100;
+  const int lo = std::max(0, center - radius);
+  const int hi = std::min(limit - viewLen_, center + radius);
+  bool high = false;
+  float bestCorr = 0.3f;  // acceptance floor: below = re-lock to newest
+  int best = -1;
+  for (int i = 1; i < limit; ++i) {
+    if (!high && s[i] >= gate) {
+      high = true;
+      const int v = i - pre;
+      if (v >= lo && v <= hi) {
+        double dot = 0.0, sn = 0.0;
+        for (int j = 0; j < W; ++j) {
+          const float x = s[static_cast<size_t>(v + j)];
+          dot += static_cast<double>(x) * trigBuf_[static_cast<size_t>(j)];
+          sn += static_cast<double>(x) * x;
+        }
+        if (sn > 1e-9) {
+          const float c = static_cast<float>(
+              dot / std::sqrt(sn * static_cast<double>(trigBufNorm_)));
+          if (c > bestCorr) {
+            bestCorr = c;
+            best = v;
+          }
+        }
+      }
+    } else if (high && s[i] <= -gate) {
+      high = false;
+    }
+  }
+  return best;
+}
+
+void ScopeView::storeTriggerRef(const float* s, int vs, size_t n) {
+  const int W = std::min(viewLen_, 2048);
+  if (W != trigWidth_ || vs < 0 || static_cast<size_t>(vs + W) > n) {
+    trigBuf_.clear();  // view length changed or bad offset: resync next frame
+    trigWidth_ = W;
+    return;
+  }
+  trigBuf_.resize(static_cast<size_t>(W));
+  double norm = 0.0;
+  for (int i = 0; i < W; ++i) {
+    const float v = s[static_cast<size_t>(vs + i)];
+    trigBuf_[static_cast<size_t>(i)] = v;
+    norm += static_cast<double>(v) * v;
+  }
+  trigBufNorm_ = static_cast<float>(norm);
+  trigWidth_ = W;
 }
 
 void ScopeView::buildPaths(int ch,

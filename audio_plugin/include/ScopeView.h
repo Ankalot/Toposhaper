@@ -21,6 +21,8 @@ private:
   void timerCallback() override;
   void refresh();
   int findTrigger(const float* s, size_t n) const;
+  int findTriggerAligned(const float* s, size_t n, int center, int radius) const;
+  void storeTriggerRef(const float* s, int vs, size_t n);
   void buildPaths(int ch,
                   const juce::Rectangle<float>& r,
                   float scale,
@@ -60,6 +62,15 @@ private:
   int viewStart_ = 0;  // shared view offset: common time axis for both ch
   float vZoomGain_ = 1.0f;
   bool locked_ = false;
+  // Corrscope-style frame-to-frame alignment: the previous frame's displayed
+  // window is the reference; each new frame locks onto the gate crossing
+  // whose window correlates best with it.
+  std::vector<float> trigBuf_;  // previous displayed window (reference)
+  float trigBufNorm_ = 0.0f;    // ||trigBuf_||^2 for normalized correlation
+  int trigWidth_ = 0;           // reference length in samples
+  int prevVs_ = -1;             // previous viewStart (in its span coords)
+  uint64_t prevSpanStart_ = 0;  // spanStart_[prim_] of that previous frame
+  int prevPrim_ = -1;           // channel the reference was taken from
   juce::String modeLabel_;
 
   // stereo view state (UI-local)
