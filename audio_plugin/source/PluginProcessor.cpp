@@ -17,6 +17,7 @@ PluginProcessor::PluginProcessor()
   drivePtr = apvts.getRawParameterValue("drive");
   smoothMixPtr = apvts.getRawParameterValue("smooth_mix");
   osPtr = apvts.getRawParameterValue("os_factor");
+  smoothModePtr = apvts.getRawParameterValue("smooth_mode");
   warpSlot_.publish(warpCurve_);
 }
 
@@ -29,6 +30,9 @@ PluginProcessor::createParameterLayout() {
       juce::ParameterID{"drive", 1}, "Drive", 0.0f, 1.0f, 1.0f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"smooth_mix", 1}, "Smooth Mix", 0.0f, 1.0f, 0.5f));
+  layout.add(std::make_unique<juce::AudioParameterChoice>(
+      juce::ParameterID{"smooth_mode", 1}, "Smooth Mode",
+      juce::StringArray{"SG", "PAVA"}, 0));
   layout.add(std::make_unique<juce::AudioParameterChoice>(
       juce::ParameterID{"os_factor", 1}, "Oversampling",
       juce::StringArray{"OFF", "X2", "X4"}, 0,
@@ -129,6 +133,7 @@ void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   osS_.reserve(static_cast<size_t>(kWindowSize) + 2);
   osA_.reserve(static_cast<size_t>(4 * kWindowSize) + 1);
   osB_.reserve(static_cast<size_t>(2 * kWindowSize) + 1);
+  pava_.reserve(static_cast<size_t>(kWindowSize));
   bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
   setLatencySamples(kWindowSize);
 }
@@ -300,6 +305,66 @@ static constexpr float kSmoothCoeffs[kSmoothLen] = {
     -78.0f / 1105.0f,  // tap i+7
 };
 
+// Median of three: eliminates isolated spikes, preserves monotonicity.
+static void median3(float* x, int n) {
+  if (n < 3)
+    return;
+  float a = x[0];
+  for (int i = 1; i < n - 1; ++i) {
+    const float b = x[i], c = x[i + 1];
+    const float m = std::max(std::min(a, b), std::min(std::max(a, b), c));
+    a = b;  // оригинальное значение едет в следующее окно
+    x[i] = m;
+  }
+}
+
+// PAVA (Pool Adjacent Violators Algorithm): nearest monotonic approximation
+// (L2). dir = +1 for increase, -1 for decrease. Plateau = average of merged
+// violators.
+static void isotonicMono(float* x, int n, float dir) {
+  if (n < 2)
+    return;
+  struct Blk {
+    double sum = 0.0;
+    int cnt = 0;
+    double mean() const { return sum / (double)cnt; }
+  };
+  juce::Array<Blk> st;
+  st.ensureStorageAllocated(64);
+  for (int i = 0; i < n; ++i) {
+    Blk b{(double)x[i] * (double)dir, 1};
+    while (st.size() > 0 && st.getLast().mean() > b.mean()) {
+      const Blk l = st.getLast();
+      st.removeLast();
+      b.sum += l.sum;
+      b.cnt += l.cnt;
+    }
+    st.add(b);
+  }
+  int i = 0;
+  for (const auto& b : st) {
+    const float m = (float)b.mean() * dir;
+    for (int k = 0; k < b.cnt; ++k)
+      x[i++] = m;
+  }
+}
+
+// Symmetric moving average: smooths out PAVA steps.
+// Monotony preserves: y'[i+1]-y'[i] = (y[i+h+1]-y[i-h])/w >= 0.
+static void movAvg(float* x, int n, int w) {
+  const int h = w / 2;
+  const std::vector<float> src(x, x + n);
+  for (int i = 0; i < n; ++i) {
+    double acc = 0.0;
+    int cnt = 0;
+    for (int k = -h; k <= h; ++k) {
+      acc += src[juce::jlimit(0, n - 1, i + k)];
+      ++cnt;
+    }
+    x[i] = (float)(acc / (double)cnt);
+  }
+}
+
 size_t PluginProcessor::readScopeSpan(float* dst,
                                       size_t n,
                                       uint64_t& startAbs,
@@ -371,6 +436,11 @@ int PluginProcessor::osFactor() const {
   return kMap[idx];
 }
 
+int PluginProcessor::smoothMode() const {
+  return juce::jlimit(
+      0, 1, static_cast<int>(smoothModePtr->load(std::memory_order_relaxed)));
+}
+
 void PluginProcessor::deformSection(const float* window,
                                     int a,
                                     int b,
@@ -398,7 +468,26 @@ void PluginProcessor::deformSection(const float* window,
   // stay raw so seams remain click-free; padding reflects the section around
   // its anchors (zero slope at the anchor, no leakage across seams).
   // Sections shorter than the kernel span are left raw.
-  const bool smooth = smoothMix > 0.0f && (b - a) >= 2 * kSmoothHalf;
+  const int mode = smoothMode();
+  const bool smooth =
+      mode == 0 && smoothMix > 0.0f && (b - a) >= 2 * kSmoothHalf;
+  const bool pava = mode == 1 && smoothMix > 0.0f && (b - a) >= 2;
+  // PAVA: Monotonize the section interior once, prior to warping. Do not touch
+  // the anchors. (seams are click-free); clamp the interior to [min(va, vb),
+  // max(va, vb)] — clamping a monotonic sequence preserves monotonicity and
+  // respects the anchors.
+  if (pava) {
+    const int L = b - a - 1;
+    pava_.resize(static_cast<size_t>(L));
+    for (int i = 0; i < L; ++i)
+      pava_[static_cast<size_t>(i)] = window[a + 1 + i];
+    median3(pava_.data(), L);
+    isotonicMono(pava_.data(), L, vb >= va ? 1.0f : -1.0f);
+    const float lo = std::min(va, vb), hi = std::max(va, vb);
+    for (auto& v : pava_)
+      v = juce::jlimit(lo, hi, v);
+    movAvg(pava_.data(), L, 7);
+  }
   const auto tapped = [window, a, b](int j) {
     if (j < a)
       j = 2 * a - j;  // reflect around the left anchor
@@ -419,7 +508,10 @@ void PluginProcessor::deformSection(const float* window,
     osS_.resize(static_cast<size_t>(L) + 2);
     for (int j = 0; j <= L; ++j) {
       float x = window[a + j];
-      if (smooth) {
+      if (pava) {
+        if (j >= 1 && j < L)  // якоря j=0 и j=L остаются сырыми
+          x += smoothMix * (pava_[static_cast<size_t>(j - 1)] - x);
+      } else if (smooth) {
         float acc = 0.0f;
         for (int k = -kSmoothHalf; k <= kSmoothHalf; ++k)
           acc += kSmoothCoeffs[k + kSmoothHalf] * tapped(a + j + k);
@@ -462,7 +554,9 @@ void PluginProcessor::deformSection(const float* window,
 
   for (int i = a + 1; i < b; ++i) {
     float x = window[i];
-    if (smooth) {
+    if (pava) {
+      x += smoothMix * (pava_[static_cast<size_t>(i - a - 1)] - x);
+    } else if (smooth) {
       float acc = 0.0f;
       for (int k = -kSmoothHalf; k <= kSmoothHalf; ++k)
         acc += kSmoothCoeffs[k + kSmoothHalf] * tapped(i + k);

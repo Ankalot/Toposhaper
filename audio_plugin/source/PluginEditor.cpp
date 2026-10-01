@@ -15,7 +15,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   driveLabel.setText("DRIVE", juce::dontSendNotification);
   warpLabel.setText("DEFORMATION", juce::dontSendNotification);
   thresholdLabel.setText("EXTREMA THRESHOLD", juce::dontSendNotification);
-  smoothLabel.setText("SMOOTHING", juce::dontSendNotification);
+  smoothLabel.setText("SMOOTH", juce::dontSendNotification);
   for (auto* l : {&driveLabel, &warpLabel, &thresholdLabel, &smoothLabel}) {
     l->setJustificationType(juce::Justification::centred);
     l->setFont(juce::Font(
@@ -49,9 +49,25 @@ PluginEditor::PluginEditor(PluginProcessor& p)
     syncOsButton();
   };
   addAndMakeVisible(osBtn_);
+  smoothModeBtn_.setTooltip(
+      "Smoothing math for section interiors: SG = Savitzky-Golay polynomial "
+      "denoise; PAVA = pool adjacent violators (isotonic monotonization): "
+      "interiors become monotone between anchors, wiggles pool into plateaus. "
+      "The SMOOTH knob sets strength in both modes (1 = full). Anchors stay "
+      "raw always.");
+  smoothModeBtn_.onClick = [this] {
+    auto* p = processorRef.parameters().getParameter("smooth_mode");
+    const int idx =
+        static_cast<int>(p->getValue() + 0.5f);  // 2 choices: norm == index
+    p->setValueNotifyingHost(idx == 0 ? 1.0f : 0.0f);
+    syncSmoothModeButton();
+  };
+  addAndMakeVisible(smoothModeBtn_);
+
   startTimerHz(10);  // catch external state/preset loads
   syncFoldToggle();
   syncOsButton();
+  syncSmoothModeButton();
 
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveSlider);
@@ -64,8 +80,10 @@ PluginEditor::PluginEditor(PluginProcessor& p)
       "DEFORMATION curve.\n"
       "Only section interiors bend - anchor peaks/valleys stay pinned.");
   smoothSlider.setTooltip(
-      "Denoises section interiors before the warp; anchors stay raw.\n"
-      "Very short sections stay raw - raise Threshold to lengthen them.");
+      "Strength of the selected smoothing math (see the SMOOTH chip):\n"
+      "SG = Savitzky-Golay denoise, PAVA = pool-adjacent-violators "
+      "monotonization.\n"
+      "Anchors stay raw; very short sections stay raw - raise Threshold.");
   thresholdSlider.setTooltip(
       "How strong an extremum must be to anchor a section.\n"
       "Low = keep fine detail; high = demote noise to texture.");
@@ -86,6 +104,7 @@ void PluginEditor::placeKnob(juce::Label& lab,
 void PluginEditor::timerCallback() {
   syncFoldToggle();
   syncOsButton();
+  syncSmoothModeButton();
 }
 
 void PluginEditor::syncFoldToggle() {
@@ -108,6 +127,17 @@ void PluginEditor::syncOsButton() {
       juce::TextButton::buttonColourId,
       f > 1 ? ui::accentL.withAlpha(0.30f) : juce::Colour(0x00000000));
   osBtn_.setColour(juce::TextButton::textColourOnId, ui::text);
+}
+
+void PluginEditor::syncSmoothModeButton() {
+  const int m = processorRef.smoothMode();
+  const juce::String t = m == 1 ? "PAVA" : "SG";
+  if (smoothModeBtn_.getButtonText() != t)
+    smoothModeBtn_.setButtonText(t);
+  smoothModeBtn_.setColour(
+      juce::TextButton::buttonColourId,
+      m == 1 ? ui::accentR.withAlpha(0.30f) : juce::Colour(0x00000000));
+  smoothModeBtn_.setColour(juce::TextButton::textColourOnId, ui::text);
 }
 
 void PluginEditor::paint(juce::Graphics& g) {
@@ -148,7 +178,20 @@ void PluginEditor::resized() {
     warpEditor.setBounds(r.withSizeKeepingCentre(side, side));
   }
   placeKnob(thresholdLabel, thresholdSlider, c2);
-  placeKnob(smoothLabel, smoothSlider, c3);
+  {  // smooth column: title with the mode chip hugging its right side;
+    auto r = c3;
+    auto labRow = r.removeFromTop(ui::labelH);
+    constexpr int kModeW = 52, kModeH = 16, kGap = 6;
+    const int labW =
+        smoothLabel.getFont().getStringWidth(smoothLabel.getText());
+    const int pairW = labW + kGap + kModeW;
+    const int x = labRow.getX() + (labRow.getWidth() - pairW) / 2;
+    smoothLabel.setBounds(labRow.withWidth(labW).withX(x));
+    smoothModeBtn_.setBounds(x + labW + kGap,
+                             labRow.getY() + (labRow.getHeight() - kModeH) / 2,
+                             kModeW, kModeH);
+    smoothSlider.setBounds(r);
+  }
   scopeView.setBounds(scope);
 }
 

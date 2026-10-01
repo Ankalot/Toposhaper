@@ -45,7 +45,8 @@ public:
   void warpEdited() { warpSlot_.publish(warpCurve_); }
 
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
-  int osFactor() const;  // 1 / 2 / 4, from the os_factor choice index
+  int osFactor() const;    // 1 / 2 / 4, from the os_factor choice index
+  int smoothMode() const;  // 0 = SG, 1 = PAVA (index choice smooth_mode)
 
   // Scope data accessors (UI thread), per channel. Processed history ends
   // kScopeMargin before the write cursor; startAbs returns ring pos of dst[0].
@@ -83,6 +84,8 @@ private:
   std::atomic<float>* drivePtr = nullptr;
   std::atomic<float>* smoothMixPtr = nullptr;
   std::atomic<float>* osPtr = nullptr;  // raw view of os_factor choice index
+  std::atomic<float>* smoothModePtr =
+      nullptr;  // raw view of smooth_mode choice index
 
   static constexpr int kWarpLutSize = 1024;
   // Warp curve: canonical model lives on the message thread; the audio thread
@@ -96,6 +99,7 @@ private:
 
   // Oversampling scratch for the warp nonlinearity: smoothed base + ping-pong
   std::vector<float> osS_, osA_, osB_;
+  std::vector<float> pava_;  // scratch: mono interior of the section (PAVA)
 
   // =========================================================================
   // Scope / marker ring sizing (edit together, don't change one alone)

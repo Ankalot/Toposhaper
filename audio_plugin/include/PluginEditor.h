@@ -31,6 +31,7 @@ private:
   void timerCallback() override;  // syncs the fold toggle with curve state
   void syncFoldToggle();
   void syncOsButton();
+  void syncSmoothModeButton();
 
   PluginProcessor& processorRef;
 
@@ -40,6 +41,7 @@ private:
   juce::Label driveLabel, warpLabel, thresholdLabel, smoothLabel;
   juce::TextButton foldToggle_{"FOLD: OFF"};
   juce::TextButton osBtn_{"OS: OFF"};
+  juce::TextButton smoothModeBtn_{"SG"};
   WarpCurveEditor warpEditor;
   ScopeView scopeView;
 
