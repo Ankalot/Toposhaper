@@ -108,7 +108,7 @@ juce_add_plugin(
   Standalone
   VST3
   PRODUCT_NAME
-  "Topological Shaper" # change this
+  "Toposhaper"
   VERSION
   0.0.1
   COPY_PLUGIN_AFTER_BUILD

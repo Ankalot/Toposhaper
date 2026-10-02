@@ -8,7 +8,7 @@ struct FactoryPreset {
 inline const FactoryPreset kFactoryPresets[1] = {
     {"Destruction", "DOLBIT NORMALNO",
      R"TS(<?xml version="1.0" encoding="UTF-8"?>
-<TopologicalShaper>
+<Toposhaper>
   <PARAM id="drive" value="1.0"/>
   <PARAM id="smooth_mix" value="0.0"/>
   <PARAM id="threshold" value="0.23"/>
@@ -21,7 +21,7 @@ inline const FactoryPreset kFactoryPresets[1] = {
     <H x="0.5" y="1.0"/>
     <P x="1.0" y="1.0"/>
   </WARP>
-</TopologicalShaper>
+</Toposhaper>
 )TS"},
 };
 inline constexpr int kNumFactoryPresets =

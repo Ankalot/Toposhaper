@@ -11,7 +11,7 @@ PluginProcessor::PluginProcessor()
               ),
       apvts(*this,
             nullptr,
-            juce::Identifier("TopologicalShaper"),
+            juce::Identifier("Toposhaper"),
             createParameterLayout()) {
   thresholdPtr = apvts.getRawParameterValue("threshold");
   drivePtr = apvts.getRawParameterValue("drive");
@@ -817,7 +817,7 @@ bool PluginProcessor::applyStateXml(const juce::String& xmlText) {
 juce::File PluginProcessor::userPresetDirectory() {
   auto dir =
       juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-          .getChildFile("TopologicalShaper")
+          .getChildFile("Toposhaper")
           .getChildFile("Presets");
   dir.createDirectory();
   return dir;

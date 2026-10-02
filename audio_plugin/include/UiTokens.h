@@ -1,5 +1,5 @@
 #pragma once
-// Central UI design tokens for Topological Shaper.
+// Central UI design tokens for Toposhaper.
 // Header-only: inline variables give one instance per binary (unity-build
 // safe). Semantic names keep widgets from re-inventing colours or sizes.
 // Values are frozen from the original per-widget palettes; change a token
