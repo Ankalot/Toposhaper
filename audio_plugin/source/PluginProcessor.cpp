@@ -29,7 +29,7 @@ PluginProcessor::createParameterLayout() {
   layout.add(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{"drive", 1}, "Drive", 0.0f, 1.0f, 1.0f));
   layout.add(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{"smooth_mix", 1}, "Smooth Mix", 0.0f, 1.0f, 0.5f));
+      juce::ParameterID{"smooth_mix", 1}, "Smooth Mix", 0.0f, 1.0f, 0.0f));
   layout.add(std::make_unique<juce::AudioParameterChoice>(
       juce::ParameterID{"smooth_mode", 1}, "Smooth Mode",
       juce::StringArray{"SG", "PAVA"}, 0));
@@ -441,6 +441,16 @@ int PluginProcessor::smoothMode() const {
       0, 1, static_cast<int>(smoothModePtr->load(std::memory_order_relaxed)));
 }
 
+void PluginProcessor::setPresetIdentity(const juce::String& name,
+                                        const juce::String& source) {
+  presetName_ = name;
+  presetSource_ = source;
+}
+
+void PluginProcessor::setPresetDirty(bool dirty) {
+  presetDirty_ = dirty;
+}
+
 void PluginProcessor::deformSection(const float* window,
                                     int a,
                                     int b,
@@ -714,24 +724,39 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor() {
   return new PluginEditor(*this);
 }
 
-void PluginProcessor::getStateInformation(juce::MemoryBlock& destData) {
+juce::ValueTree PluginProcessor::buildStateTree(bool includeUi) {
   auto state = apvts.copyState();
   state.appendChild(warpCurve_.toValueTree(), nullptr);
-  juce::ValueTree ui("UI");
-  ui.setProperty("viewLen", uiState_.viewLen, nullptr);
-  ui.setProperty("vExp", uiState_.vExp, nullptr);
-  ui.setProperty("chan", uiState_.chanMode, nullptr);
-  ui.setProperty("track", uiState_.track, nullptr);
-  state.appendChild(ui, nullptr);
-  if (std::unique_ptr<juce::XmlElement> xml = state.createXml())
+  juce::ValueTree meta("PRESET");
+  meta.setProperty("name", presetName_, nullptr);
+  meta.setProperty("source", presetSource_, nullptr);
+  meta.setProperty("dirty", presetDirty_, nullptr);
+  state.appendChild(meta, nullptr);
+  if (includeUi) {  // view recall: only for host sessions, never for presets
+    juce::ValueTree ui("UI");
+    ui.setProperty("viewLen", uiState_.viewLen, nullptr);
+    ui.setProperty("vExp", uiState_.vExp, nullptr);
+    ui.setProperty("chan", uiState_.chanMode, nullptr);
+    ui.setProperty("track", uiState_.track, nullptr);
+    state.appendChild(ui, nullptr);
+  }
+  return state;
+}
+
+void PluginProcessor::getStateInformation(juce::MemoryBlock& destData) {
+  if (std::unique_ptr<juce::XmlElement> xml = buildStateTree(true).createXml())
     copyXmlToBinary(*xml, destData);
 }
 
-void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
-  std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
-  if (xml == nullptr)
-    return;
-  juce::ValueTree tree = juce::ValueTree::fromXml(*xml);
+juce::String PluginProcessor::copyStateAsXml() {
+  if (std::unique_ptr<juce::XmlElement> xml = buildStateTree(false).createXml())
+    return xml->toString();
+  return {};
+}
+
+bool PluginProcessor::applyStateTree(juce::ValueTree tree) {
+  if (!tree.isValid())
+    return false;
   auto warp = tree.getChildWithName(WarpCurve::kStateTag);
   if (warp.isValid()) {
     warpCurve_.fromValueTree(warp);
@@ -748,10 +773,54 @@ void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
         juce::jlimit(0, 3, static_cast<int>(ui.getProperty("chan", 0)));
     uiState_.track = static_cast<bool>(ui.getProperty("track", true));
     tree.removeChild(ui, nullptr);
-    ++uiState_.seq;  // open editors pick this up on their next timer tick
+    ++uiState_.seq;
   }
-  if (tree.isValid() && tree.hasType(apvts.state.getType()))
+  if (tree.isValid() && tree.hasType(apvts.state.getType())) {
+    auto meta = tree.getChildWithName("PRESET");
+    if (meta.isValid()) {
+      presetName_ = meta.getProperty("name", "Init").toString();
+      presetSource_ = meta.getProperty("source", "init").toString();
+      presetDirty_ = static_cast<bool>(meta.getProperty("dirty", false));
+      tree.removeChild(meta, nullptr);
+    } else {
+      presetName_ = "Init";  // old sessions / preset blobs: no identity
+      presetSource_ = "init";
+      presetDirty_ = false;
+    }
     apvts.replaceState(tree);
+  }
+  return true;
+}
+
+void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
+  std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
+  if (xml == nullptr)
+    return;
+  applyStateTree(juce::ValueTree::fromXml(*xml));
+}
+
+bool PluginProcessor::applyStateXml(const juce::String& xmlText) {
+  if (std::unique_ptr<juce::XmlElement> xml =
+          juce::XmlDocument::parse(xmlText)) {
+    auto tree = juce::ValueTree::fromXml(*xml);
+    // Presets must never yank the view: strip UI even if an old/foreign
+    // blob carries it, so apply-path is sound-only by construction.
+    if (auto ui = tree.getChildWithName("UI"); ui.isValid())
+      tree.removeChild(ui, nullptr);
+    if (auto meta = tree.getChildWithName("PRESET"); meta.isValid())
+      tree.removeChild(meta, nullptr);
+    return applyStateTree(tree);
+  }
+  return false;
+}
+
+juce::File PluginProcessor::userPresetDirectory() {
+  auto dir =
+      juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+          .getChildFile("TopologicalShaper")
+          .getChildFile("Presets");
+  dir.createDirectory();
+  return dir;
 }
 }  // namespace audio_plugin
 

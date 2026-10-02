@@ -25,6 +25,8 @@ END_JUCE_MODULE_DECLARATION
 #include "include/WarpCurve.h"
 #include "include/WarpCurveEditor.h"
 #include "include/ScopeView.h"
+#include "include/FactoryPresets.h"
+#include "include/PresetBar.h"
 #include "include/PluginProcessor.h"
 #include "include/PluginEditor.h"
 

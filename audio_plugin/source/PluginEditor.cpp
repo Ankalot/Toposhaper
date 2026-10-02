@@ -3,8 +3,13 @@ namespace audio_plugin {
 PluginEditor::PluginEditor(PluginProcessor& p)
     : AudioProcessorEditor(&p),
       processorRef(p),
-      warpEditor(processorRef.warp(), [this] { processorRef.warpEdited(); }),
-      scopeView(processorRef) {
+      warpEditor(processorRef.warp(),
+                 [this] {
+                   processorRef.warpEdited();
+                   presetBar.markModified();
+                 }),
+      scopeView(processorRef),
+      presetBar(p) {
   // Rotary knobs bound to the APVTS parameters
   for (auto* s : {&driveSlider, &thresholdSlider, &smoothSlider}) {
     s->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -35,6 +40,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
     auto& w = processorRef.warp();
     w.setMonotonicLock(!w.monotonicLock());
     processorRef.warpEdited();  // rebake LUT on the audio thread
+    presetBar.markModified();   // lock is part of the warp tree = preset state
     syncFoldToggle();
   };
   addAndMakeVisible(foldToggle_);
@@ -69,6 +75,11 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   syncOsButton();
   syncSmoothModeButton();
 
+  for (auto* id :
+       {"drive", "threshold", "smooth_mix", "os_factor", "smooth_mode"})
+    processorRef.parameters().addParameterListener(id, this);
+  addAndMakeVisible(presetBar);
+
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveSlider);
   thresholdAtt = std::make_unique<SliderAttachment>(
@@ -91,6 +102,16 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   setResizable(true, false);
   setResizeLimits(560, 420, 1400, 1000);
   setSize(820, 600);
+}
+
+PluginEditor::~PluginEditor() {
+  for (auto* id :
+       {"drive", "threshold", "smooth_mix", "os_factor", "smooth_mode"})
+    processorRef.parameters().removeParameterListener(id, this);
+}
+
+void PluginEditor::parameterChanged(const juce::String&, float) {
+  presetBar.markModified();
 }
 
 void PluginEditor::placeKnob(juce::Label& lab,
@@ -147,6 +168,11 @@ void PluginEditor::paint(juce::Graphics& g) {
 
 void PluginEditor::resized() {
   auto area = getLocalBounds().reduced(ui::margin);
+  {  // minimalist preset bar
+    auto bar = area.removeFromTop(22);
+    area.removeFromTop(6);
+    presetBar.setBounds(bar);
+  }
   // Top control strip: ~1/3 of the height, clamped to sane bounds
   auto top = area.removeFromTop(
       juce::jlimit(ui::stripMin, ui::stripMax, area.getHeight() / 3));
@@ -182,8 +208,12 @@ void PluginEditor::resized() {
     auto r = c3;
     auto labRow = r.removeFromTop(ui::labelH);
     constexpr int kModeW = 52, kModeH = 16, kGap = 6;
-    const int labW =
-        smoothLabel.getFont().getStringWidth(smoothLabel.getText());
+    juce::AttributedString as;
+    as.setText(smoothLabel.getText());
+    as.setFont(smoothLabel.getFont());
+    juce::TextLayout tl;
+    tl.createLayout(as, 10000.0f);  // unbounded single line
+    const int labW = static_cast<int>(std::ceil(tl.getWidth()));
     const int pairW = labW + kGap + kModeW;
     const int x = labRow.getX() + (labRow.getWidth() - pairW) / 2;
     smoothLabel.setBounds(labRow.withWidth(labW).withX(x));

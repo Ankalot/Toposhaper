@@ -1,9 +1,12 @@
 #pragma once
 
 namespace audio_plugin {
-class PluginEditor : public juce::AudioProcessorEditor, private juce::Timer {
+class PluginEditor : public juce::AudioProcessorEditor,
+                     private juce::Timer,
+                     private juce::AudioProcessorValueTreeState::Listener {
 public:
   explicit PluginEditor(PluginProcessor&);
+  ~PluginEditor() override;
 
   void paint(juce::Graphics&) override;
   void resized() override;
@@ -32,6 +35,7 @@ private:
   void syncFoldToggle();
   void syncOsButton();
   void syncSmoothModeButton();
+  void parameterChanged(const juce::String&, float) override;
 
   PluginProcessor& processorRef;
 
@@ -44,6 +48,7 @@ private:
   juce::TextButton smoothModeBtn_{"SG"};
   WarpCurveEditor warpEditor;
   ScopeView scopeView;
+  PresetBar presetBar;
 
   // Declared after the widgets so they outlive the attachments they bind
   using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;

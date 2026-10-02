@@ -7,3 +7,4 @@
 #include "source/WarpCurve.cpp"
 #include "source/WarpCurveEditor.cpp"
 #include "source/ScopeView.cpp"
+#include "source/PresetBar.cpp"

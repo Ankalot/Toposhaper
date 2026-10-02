@@ -47,6 +47,14 @@ public:
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
   int osFactor() const;    // 1 / 2 / 4, from the os_factor choice index
   int smoothMode() const;  // 0 = SG, 1 = PAVA (index choice smooth_mode)
+  juce::String copyStateAsXml();
+  bool applyStateXml(const juce::String& xml);
+  static juce::File userPresetDirectory();
+  const juce::String& presetName() const { return presetName_; }
+  const juce::String& presetSource() const { return presetSource_; }
+  void setPresetIdentity(const juce::String& name, const juce::String& source);
+  bool presetDirty() const { return presetDirty_; }
+  void setPresetDirty(bool dirty);
 
   // Scope data accessors (UI thread), per channel. Processed history ends
   // kScopeMargin before the write cursor; startAbs returns ring pos of dst[0].
@@ -154,6 +162,8 @@ private:
   bool windowSilent_ =
       false;         // last analysis window was degenerate (silence/DC)
   UiState uiState_;  // view recall mirror: editor writes, state serializes
+  juce::String presetName_{"Init"}, presetSource_{"init"};
+  bool presetDirty_ = false;  // '*' flag: state differs from applied/saved preset
 
   void findExtrema(const float* window);
   int findRoot(int i);
@@ -171,6 +181,9 @@ private:
                      int b,
                      float* out,
                      int outOffset);
+
+  juce::ValueTree buildStateTree(bool includeUi);
+  bool applyStateTree(juce::ValueTree tree);
 
   // Per-channel input accumulation and output FIFO. The FIFO is prefilled
   // with kWindowSize zeros: that silence IS the reported latency, so the
