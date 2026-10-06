@@ -2,10 +2,17 @@
 enable_testing()
 
 # Creates the test console application.
-add_executable(AudioPluginTest source/AudioProcessorTest.cpp)
+add_executable(AudioPluginTest
+    source/main.cpp
+    source/AudioProcessorTest.cpp
+    source/ProcessorDspTest.cpp
+    source/WarpCurveTest.cpp
+)
 
-# Thanks to the fact that we link against the gtest_main library, we don't have to write the main function ourselves.
-target_link_libraries(AudioPluginTest PRIVATE my_company::audio_plugin GTest::gtest_main)
+target_link_libraries(AudioPluginTest PRIVATE 
+    my_company::audio_plugin 
+    GTest::gtest
+)
 
 # These definitions are recommended by JUCE:
 target_compile_definitions(AudioPluginTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
@@ -32,4 +39,8 @@ if(CMAKE_GENERATOR STREQUAL Xcode)
   )
 else()
   gtest_discover_tests(AudioPluginTest)
+endif()
+
+if(MSVC)
+    target_link_options(AudioPluginTest PRIVATE /STACK:8388608)
 endif()
