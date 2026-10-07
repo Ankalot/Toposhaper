@@ -110,7 +110,7 @@ juce_add_plugin(
   PRODUCT_NAME
   "Toposhaper"
   VERSION
-  0.0.1
+  0.1.0
   COPY_PLUGIN_AFTER_BUILD
   FALSE # Changing this to TRUE will enable automatic copying of the built plugin formats
         # to correct directories on your system. The directories must exist, though
@@ -124,7 +124,7 @@ target_compile_definitions(AudioPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=
 # not as static or shared libraries. Otherwise, you risk buggy JUCE build configuration.
 # This is unlikely on small projects, but we want to use the best practices from the start
 # (and migrating to JUCE modules at a late development stage is a nightmare, trust me).
-juce_add_module(audio_plugin ALIAS_NAMESPACE my_company)
+juce_add_module(audio_plugin ALIAS_NAMESPACE ankalot)
 
 # In the following, we re-export some of the compile-time definitions derived from arguments of
 # juce_add_plugin(). This is necessary to maintain consistent behavior in built plugins and in tests.
@@ -150,7 +150,7 @@ target_compile_options(audio_plugin INTERFACE "${PROJECT_WARNINGS_CXX}")
 # We need to link the plugin targets with the module containing our code.
 target_link_libraries(
   AudioPlugin
-  PRIVATE my_company::audio_plugin
+  PRIVATE ankalot::audio_plugin
   PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags
 )
 

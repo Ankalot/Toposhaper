@@ -4,14 +4,13 @@
 BEGIN_JUCE_MODULE_DECLARATION
 
    ID:            audio_plugin
-   vendor:        WolfSound
+   vendor:        Ankalot
    version:       0.1.0
-   name:          Audio Plugin
-   description:   Plugin core
+   name:          Toposhaper
+   description:   Topological waveshaper core
    dependencies:  juce_audio_utils
 
-   website:       https://thewolfsound.com
-   license:       Unlicense
+   license:       GPL-3.0
 
 END_JUCE_MODULE_DECLARATION
 
