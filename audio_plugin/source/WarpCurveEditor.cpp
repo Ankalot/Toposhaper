@@ -14,8 +14,6 @@ constexpr float kPointR = 5.0f;
 constexpr float kPointRHot = 6.5f;
 constexpr float kHandleR = 4.0f;
 constexpr float kHandleRHot = 5.5f;
-constexpr float kEndR = 4.5f;
-constexpr float kCtrlR = 2.5f;
 
 constexpr float kSnapStep = 0.05f;  // Alt-snap grid; includes drawn quarters
 float snapped(float v) {

@@ -40,9 +40,6 @@ private:
   bool channelActive(int ch) const;
   int lenFromH(double t) const;
   double hFromLen(int len) const;
-  void updateModeLabel();
-  void updateChanLabel();
-  void updateSmMetric();
   void updateSmChip();
   void pushUiState();   // widgets -> processor mirror (each refresh)
   void applyUiState();  // processor -> widgets (restore while open)
@@ -75,14 +72,12 @@ private:
   int prevVs_ = -1;             // previous viewStart (in its span coords)
   uint64_t prevSpanStart_ = 0;  // spanStart_[prim_] of that previous frame
   int prevPrim_ = -1;           // channel the reference was taken from
-  juce::String modeLabel_;
 
   // stereo view state (UI-local)
   int chanMode_ = 0;     // 0=L, 1=R, 2=L+R overlay, 3=L|R split
   int prim_ = 0;         // effective primary channel
   bool stereo_ = false;  // overlay/split actively drawing two channels
   bool hasR_ = false;    // R history available and aligned
-  juce::String smText_;
   uint32_t uiSeq_ = 0;  // last seen UiState::seq
 
   // Passive stereo-width indicator

@@ -8,7 +8,7 @@ PresetMenu::PresetMenu(PluginProcessor& p) : proc_(p) {
   nameBtn_.setAlpha(0.0f);  // invisible hit zone over the teal window
   nameBtn_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
   nameBtn_.setTooltip(
-      "Preset menu, click to interract.\n"
+      "Preset menu, click to interact.\n"
       "Arrows step through factory+user list.");
   nameBtn_.onClick = [this] { showMenu(); };
   addAndMakeVisible(nameBtn_);
@@ -18,10 +18,6 @@ PresetMenu::PresetMenu(PluginProcessor& p) : proc_(p) {
   addAndMakeVisible(next_);
   startTimerHz(30);
   sync();
-}
-
-PresetMenu::~PresetMenu() {
-  nameBtn_.setLookAndFeel(nullptr);
 }
 
 void PresetMenu::resized() {
@@ -51,8 +47,6 @@ void PresetMenu::paint(juce::Graphics& g) {
       const auto win = nameBtn_.getBounds().toFloat();
       g.saveState();
       g.reduceClipRegion(nameBtn_.getBounds());
-      g.setFont(nameFont_);
-      g.setColour(ui::black);
       if (!scrolling_) {
         g.drawText(dispName_, win.toNearestInt(), juce::Justification::centred,
                    false);

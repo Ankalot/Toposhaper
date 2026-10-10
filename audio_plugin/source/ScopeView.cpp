@@ -27,7 +27,6 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
       "(true-time).");
   trackBtn_.onClick = [this] {
     trailN_[0] = trailN_[1] = 0;
-    updateModeLabel();
     repaint();
   };
 
@@ -36,7 +35,6 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
       return;
     chanMode_ = mode;  // drag: jump straight to the detent under cursor
     trailN_[0] = trailN_[1] = 0;
-    updateChanLabel();
     repaint();
   };
   chanBtn_.setTooltip(
@@ -50,17 +48,17 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
       " dB relative to the mid (L+R) and above " +
       juce::String(SmChip::kFloorDbfs, 0) + " dBFS absolute).");
 
-  vZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
+  vZoom_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
   vZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   vZoom_.setRange(-2.0, 5.0, 0.01);  // gain = 2^v: 0.25x .. 32x
   vZoom_.setValue(proc_.uiState().vExp, juce::dontSendNotification);
   vZoom_.setTooltip(
       "Vertical zoom (amplitude), shared by both channels. It can also be "
-      "controlled using Ctrl/Shift + MWheel on the disaply.");
+      "controlled using Ctrl/Shift + MWheel on the display.");
   vZoom_.setScrollWheelEnabled(false);
   vZoom_.onValueChange = [this] { repaint(); };
 
-  hZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
+  hZoom_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
   hZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   hZoom_.setRange(0.0, 1000.0, 1.0);  // 256..32768 samples, log
   hZoom_.setValue(hFromLen(proc_.uiState().viewLen),
@@ -83,8 +81,6 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   addAndMakeVisible(hZoom_);
   hZoom_.setAlpha(0.0f);
   addAndMakeVisible(smChip_);
-  vZoom_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-  hZoom_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
 
   trackBtn_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
   chanBtn_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -98,7 +94,6 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   uiSeq_ = proc_.uiState().seq;
   setOpaque(false);
   startTimerHz(60);
-  updateChanLabel();
 }
 
 void ScopeView::SmChip::setLit(bool lit) {
@@ -225,25 +220,6 @@ void ScopeView::timerCallback() {
   repaint();
 }
 
-void ScopeView::updateModeLabel() {
-  juce::String s;
-  if (!trackBtn_.getToggleState())
-    s = "TRACK: OFF";
-  else
-    s = locked_ ? "TRACK: LOCK" : "TRACK: FREE";
-  if (s != modeLabel_) {
-    modeLabel_ = s;
-    trackBtn_.setButtonText(s);
-  }
-}
-
-void ScopeView::updateChanLabel() {
-  static const char* kNames[4] = {"CH: L", "CH: R", "CH: L+R", "CH: L/R"};
-  const juce::String s = hasR_ ? kNames[chanMode_] : juce::String("CH: L");
-  if (chanBtn_.getButtonText() != s)
-    chanBtn_.setButtonText(s);
-}
-
 float ScopeView::SmChip::dbToRatio(float db) {
   return std::pow(10.0f, db / 20.0f);
 }
@@ -284,8 +260,6 @@ void ScopeView::applyUiState() {
   chanMode_ = s.chanMode;
   trackBtn_.setToggleState(s.track, juce::dontSendNotification);
   trailN_[0] = trailN_[1] = 0;
-  updateChanLabel();
-  updateModeLabel();
 }
 
 void ScopeView::refresh() {
@@ -311,8 +285,6 @@ void ScopeView::refresh() {
   prim_ = primaryChannel();
   stereo_ = hasR_ && chanMode_ >= 2;
   if (spanN_[prim_] == 0) {
-    updateModeLabel();
-    updateChanLabel();
     updateSmChip();
     return;
   }
@@ -389,8 +361,6 @@ void ScopeView::refresh() {
     buildPaths(ch, laneRect(ch), scale, true);
   }
 
-  updateModeLabel();
-  updateChanLabel();
   updateSmChip();
   pushUiState();  // keep the processor mirror fresh for getStateInformation
 }

@@ -439,14 +439,6 @@ PluginEditor::PluginEditor(PluginProcessor& p)
       foldSwitch(processorRef, [this] { presetMenu.markModified(); }),
       smoothTag(processorRef),
       presetMenu(p) {
-  warpLabel.setText("DEFORMATION", juce::dontSendNotification);
-  for (auto* l : {&warpLabel}) {
-    l->setJustificationType(juce::Justification::centred);
-    l->setFont(juce::Font(
-        juce::FontOptions().withHeight(ui::fontLabel).withStyle("Bold")));
-    // addAndMakeVisible(*l);
-  }
-  // addAndMakeVisible(warpEditor);
   addAndMakeVisible(scopeView);
 
   addAndMakeVisible(driveFlask);

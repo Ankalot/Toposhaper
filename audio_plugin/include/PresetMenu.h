@@ -8,7 +8,7 @@ namespace audio_plugin {
 class PresetMenu : public juce::Component, private juce::Timer {
 public:
   explicit PresetMenu(PluginProcessor& p);
-  ~PresetMenu() override;
+  ~PresetMenu() override = default;
 
   void markModified();  // called from PluginEditor when a parameter changes
   void setNameFont(const juce::Font& f);
