@@ -13,6 +13,7 @@ public:
   // onChange may be passed here or later via setOnChange()
   WarpCurveEditor(WarpCurve& curve, std::function<void()> onChange = {});
   void setOnChange(std::function<void()> cb) { onChange_ = std::move(cb); }
+  void setReadoutFont(const juce::Font& f) { readoutFont_ = f; }
 
   void paint(juce::Graphics&) override;
   void mouseDown(const juce::MouseEvent&) override;
@@ -29,7 +30,9 @@ private:
     int index = -1;
   };
 
-  juce::Rectangle<float> curveRect() const;  // largest inscribed square
+  juce::Rectangle<float> curveRect()
+      const;  // printed unit square, local coords
+  juce::Rectangle<float> readoutRect() const;
   juce::Point<float> toUI(const WarpCurve::Node& n) const;
   WarpCurve::Node fromUI(juce::Point<float> p) const;
   Hit hitTest(juce::Point<float> p) const;
@@ -44,6 +47,8 @@ private:
   juce::Point<float> grabOffset_;
   float lockedHandleX_ = 0.5f;  // Shift-drag vertical lock
   Hit hover_;
+  juce::Font readoutFont_{
+      juce::FontOptions{}};  // handwritten chalk (Caveat) for the x/y readout
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WarpCurveEditor)
 };

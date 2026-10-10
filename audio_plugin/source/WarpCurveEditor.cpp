@@ -1,5 +1,14 @@
 namespace audio_plugin {
 namespace {
+// Printed unit square on the board, in component-local px.
+// Component bounds = board interior;
+constexpr float kUnitX = 20.0f;
+constexpr float kUnitY = 51.0f;
+constexpr float kUnitW = 160.0f;
+constexpr float kUnitH = 160.0f;
+constexpr float kCurveW = 2.6f;  // chalk stroke for the curve
+constexpr float kGridW = 1.0f;   // chalk stroke for the half grid
+
 // Widget-private geometry (not shared design tokens)
 constexpr float kPointR = 5.0f;
 constexpr float kPointRHot = 6.5f;
@@ -21,12 +30,86 @@ WarpCurveEditor::WarpCurveEditor(WarpCurve& curve,
 }
 
 juce::Rectangle<float> WarpCurveEditor::curveRect() const {
-  const auto b = getLocalBounds().toFloat().reduced(ui::panelInset);
-  const float side = std::min(b.getWidth(), b.getHeight());
-  if (side <= 0.0f)
-    return {};
-  return {b.getCentreX() - side * 0.5f, b.getCentreY() - side * 0.5f, side,
-          side};
+  return {kUnitX, kUnitY, kUnitW, kUnitH};  // the art prints the square
+}
+
+juce::Rectangle<float> WarpCurveEditor::readoutRect() const {
+  // Handwritten coords live top-right of the unit square, as in the art
+  return {kUnitX + kUnitW + 24.0f, kUnitY + 4.0f, 130.0f, 24.0f};
+}
+
+void WarpCurveEditor::paint(juce::Graphics& g) {
+  const auto r = curveRect();
+  if (r.isEmpty())
+    return;
+  // Quarter grid by default: chalk lines at 0.25 / 0.5 / 0.75 on both axes
+  g.setColour(ui::chalk.withAlpha(0.55f));
+  for (int i = 1; i < 4; ++i) {
+    const float f = static_cast<float>(i) * 0.25f;
+    g.drawLine({r.getX() + f * r.getWidth(), r.getY(),
+                r.getX() + f * r.getWidth(), r.getBottom()},
+               kGridW);
+    g.drawLine({r.getX(), r.getBottom() - f * r.getHeight(), r.getRight(),
+                r.getBottom() - f * r.getHeight()},
+               kGridW);
+  }
+  // Fine snap grid while Alt is held: fainter chalk, same 0.05 step
+  if (juce::ModifierKeys::getCurrentModifiers().isAltDown()) {
+    g.setColour(ui::chalk.withAlpha(0.18f));
+    for (int i = 1; i < 20; ++i) {
+      if (i % 5 == 0)
+        continue;  // halves are already drawn
+      const float f = static_cast<float>(i) * kSnapStep;
+      g.drawLine({r.getX() + f * r.getWidth(), r.getY(),
+                  r.getX() + f * r.getWidth(), r.getBottom()},
+                 1.0f);
+      g.drawLine({r.getX(), r.getBottom() - f * r.getHeight(), r.getRight(),
+                  r.getBottom() - f * r.getHeight()},
+                 1.0f);
+    }
+  }
+  // Curve as exact quadratic Beziers (same math as the DSP LUT), chalk
+  juce::Path curve;
+  curve.startNewSubPath(toUI(curve_.point(0)));
+  for (int s = 0; s < curve_.numSegments(); ++s)
+    curve.quadraticTo(toUI(curve_.control(s)), toUI(curve_.point(s + 1)));
+  g.setColour(ui::chalk);
+  g.strokePath(curve,
+               juce::PathStrokeType(kCurveW, juce::PathStrokeType::curved,
+                                    juce::PathStrokeType::rounded));
+  // On-curve handles: amber chalk dots - the dots the user drags
+  for (int s = 0; s < curve_.numSegments(); ++s) {
+    const bool hot = (hover_.kind == Kind::handle && hover_.index == s) ||
+                     (grab_ == Kind::handle && grabIndex_ == s);
+    const auto q = toUI(curve_.handleNode(s));
+    const float rad = hot ? kHandleRHot : kHandleR;
+    g.setColour(ui::accentR);
+    g.fillEllipse(q.x - rad, q.y - rad, rad * 2.0f, rad * 2.0f);
+    if (hot) {  // chalk ring around the grabbed handle
+      g.setColour(ui::chalk);
+      g.drawEllipse(q.x - rad - 2.0f, q.y - rad - 2.0f, rad * 2.0f + 4.0f,
+                    rad * 2.0f + 4.0f, 1.5f);
+    }
+  }
+  // Interior points: plain white chalk dots
+  for (int i = 1; i < curve_.numPoints() - 1; ++i) {
+    const bool hot = (hover_.kind == Kind::point && hover_.index == i) ||
+                     (grab_ == Kind::point && grabIndex_ == i);
+    const auto p = toUI(curve_.point(i));
+    const float rad = hot ? kPointRHot : kPointR;
+    g.setColour(ui::chalk);
+    g.fillEllipse(p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
+  }
+  // Live handwritten readout while dragging, exactly as in the art mock
+  if (grab_ != Kind::none && grabIndex_ >= 0) {
+    const auto v = (grab_ == Kind::point) ? curve_.point(grabIndex_)
+                                          : curve_.handleNode(grabIndex_);
+    const juce::String txt =
+        "x: " + juce::String(v.x, 2) + "; y: " + juce::String(v.y, 2);
+    g.setFont(readoutFont_);
+    g.setColour(ui::chalk);
+    g.drawText(txt, readoutRect(), juce::Justification::centredLeft, false);
+  }
 }
 
 juce::Point<float> WarpCurveEditor::toUI(const WarpCurve::Node& n) const {
@@ -165,124 +248,4 @@ void WarpCurveEditor::mouseExit(const juce::MouseEvent&) {
   setMouseCursor(juce::MouseCursor::NormalCursor);
   repaint();
 }
-
-void WarpCurveEditor::paint(juce::Graphics& g) {
-  const auto bounds = getLocalBounds().toFloat();
-  const auto r = curveRect();
-  if (r.isEmpty())
-    return;
-  // Panel
-  g.setColour(ui::panel);
-  g.fillRoundedRectangle(bounds, ui::corner);
-  g.setColour(ui::frame);
-  g.drawRoundedRectangle(bounds, ui::corner, ui::frameW);
-  // Quarter grid
-  g.setColour(ui::grid);
-  for (int i = 1; i < 4; ++i) {
-    const float f = static_cast<float>(i) * 0.25f;
-    g.drawLine({r.getX() + f * r.getWidth(), r.getY(),
-                r.getX() + f * r.getWidth(), r.getBottom()});
-    g.drawLine({r.getX(), r.getBottom() - f * r.getHeight(), r.getRight(),
-                r.getBottom() - f * r.getHeight()});
-  }
-  // Finer grid
-  if (juce::ModifierKeys::getCurrentModifiers().isAltDown()) {
-    const juce::Colour fine{0x0cffffff};  // fainter than the quarter grid
-    g.setColour(fine);
-    for (int i = 1; i < 20; ++i) {
-      if (i % 5 == 0)
-        continue;  // quarters are already drawn
-      const float f = static_cast<float>(i) * kSnapStep;
-      g.drawLine({r.getX() + f * r.getWidth(), r.getY(),
-                  r.getX() + f * r.getWidth(), r.getBottom()});
-      g.drawLine({r.getX(), r.getBottom() - f * r.getHeight(), r.getRight(),
-                  r.getBottom() - f * r.getHeight()});
-    }
-  }
-  // Identity diagonal, dashed hairline
-  g.setColour(ui::diag);
-  for (int i = 0; i < 24; i += 2) {
-    const float t0 = static_cast<float>(i) / 24.0f;
-    const float t1 = static_cast<float>(i + 1) / 24.0f;
-    g.drawLine(
-        {r.getX() + t0 * r.getWidth(), r.getBottom() - t0 * r.getHeight(),
-         r.getX() + t1 * r.getWidth(), r.getBottom() - t1 * r.getHeight()},
-        1.0f);
-  }
-  // Curve as exact quadratic Beziers (same math as the DSP LUT)
-  juce::Path curve;
-  curve.startNewSubPath(toUI(curve_.point(0)));
-  for (int s = 0; s < curve_.numSegments(); ++s)
-    curve.quadraticTo(toUI(curve_.control(s)), toUI(curve_.point(s + 1)));
-  {  // soft fill under the curve
-    juce::Path fill = curve;
-    fill.lineTo(r.getRight(), r.getBottom());
-    fill.lineTo(r.getX(), r.getBottom());
-    fill.closeSubPath();
-    g.setColour(ui::fillL);
-    g.fillPath(fill);
-  }
-  // Glow + stroke
-  g.setColour(ui::glowL);
-  g.strokePath(curve,
-               juce::PathStrokeType(ui::glowW, juce::PathStrokeType::curved,
-                                    juce::PathStrokeType::rounded));
-  g.setColour(ui::accentL);
-  g.strokePath(curve,
-               juce::PathStrokeType(ui::curveW, juce::PathStrokeType::curved,
-                                    juce::PathStrokeType::rounded));
-  // On-curve handles: the dots the user actually drags
-  for (int s = 0; s < curve_.numSegments(); ++s) {
-    const bool hot = (hover_.kind == Kind::handle && hover_.index == s) ||
-                     (grab_ == Kind::handle && grabIndex_ == s);
-    const auto q = toUI(curve_.handleNode(s));
-    const float rad = hot ? kHandleRHot : kHandleR;
-    g.setColour(ui::handle);
-    g.fillEllipse(q.x - rad, q.y - rad, rad * 2.0f, rad * 2.0f);
-    g.setColour(ui::panel.withAlpha(0.9f));
-    g.fillEllipse(q.x - 1.5f, q.y - 1.5f, 3.0f, 3.0f);
-  }
-  // Fixed endpoints: small diamonds (visibly not draggable)
-  for (const int i : {0, curve_.numPoints() - 1}) {
-    const auto p = toUI(curve_.point(i));
-    juce::Path diamond;
-    diamond.startNewSubPath(p.x, p.y - kEndR);
-    diamond.lineTo(p.x + kEndR, p.y);
-    diamond.lineTo(p.x, p.y + kEndR);
-    diamond.lineTo(p.x - kEndR, p.y);
-    diamond.closeSubPath();
-    g.setColour(ui::endpoint);
-    g.fillPath(diamond);
-  }
-  // Interior points
-  for (int i = 1; i < curve_.numPoints() - 1; ++i) {
-    const bool hot = (hover_.kind == Kind::point && hover_.index == i) ||
-                     (grab_ == Kind::point && grabIndex_ == i);
-    const auto p = toUI(curve_.point(i));
-    const float rad = hot ? kPointRHot : kPointR;
-    g.setColour(ui::accentL);
-    g.fillEllipse(p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
-    g.setColour(ui::textHi);
-    g.drawEllipse(p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f, ui::thinW);
-  }
-  // Live coordinate readout while dragging
-  if (grab_ != Kind::none && grabIndex_ >= 0) {
-    const auto v = (grab_ == Kind::point) ? curve_.point(grabIndex_)
-                                          : curve_.handleNode(grabIndex_);
-    const float rx = v.x + 0.0f;
-    const float ry = v.y + 0.0f;
-    const auto txt = juce::String(rx, 2) + " / " + juce::String(ry, 2);
-    const juce::Font font{juce::FontOptions().withHeight(ui::fontTiny)};
-    g.setFont(font);
-    juce::GlyphArrangement ga;
-    ga.addLineOfText(font, txt, 0.0f, 0.0f);
-    const float tw = ga.getBoundingBox(0, txt.length(), true).getWidth();
-    auto box = bounds.reduced(6.0f).withHeight(14.0f).withWidth(tw + 10.0f);
-    g.setColour(ui::panel.withAlpha(0.75f));
-    g.fillRoundedRectangle(box, 3.0f);
-    g.setColour(ui::text);
-    g.drawText(txt, box, juce::Justification::centred, false);
-  }
-}
-
 }  // namespace audio_plugin

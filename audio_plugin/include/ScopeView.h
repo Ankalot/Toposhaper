@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <functional>
 
 namespace audio_plugin {
 
@@ -21,7 +22,10 @@ private:
   void timerCallback() override;
   void refresh();
   int findTrigger(const float* s, size_t n) const;
-  int findTriggerAligned(const float* s, size_t n, int center, int radius) const;
+  int findTriggerAligned(const float* s,
+                         size_t n,
+                         int center,
+                         int radius) const;
   void storeTriggerRef(const float* s, int vs, size_t n);
   void buildPaths(int ch,
                   const juce::Rectangle<float>& r,
@@ -74,35 +78,74 @@ private:
   juce::String modeLabel_;
 
   // stereo view state (UI-local)
-  int chanMode_ = 0;      // 0=L, 1=R, 2=L+R overlay, 3=L|R split
-  int prim_ = 0;          // effective primary channel
-  bool stereo_ = false;   // overlay/split actively drawing two channels
-  bool hasR_ = false;     // R history available and aligned
-  float smDb_ = -120.0f;  // side/mid energy ratio of the visible window
+  int chanMode_ = 0;     // 0=L, 1=R, 2=L+R overlay, 3=L|R split
+  int prim_ = 0;         // effective primary channel
+  bool stereo_ = false;  // overlay/split actively drawing two channels
+  bool hasR_ = false;    // R history available and aligned
   juce::String smText_;
-  uint32_t frame_ = 0;
   uint32_t uiSeq_ = 0;  // last seen UiState::seq
 
   // Passive stereo-width indicator
   class SmChip : public juce::Component, public juce::TooltipClient {
   public:
-    void setText(const juce::String& t);
-    void setTint(juce::Colour c);
-    void paint(juce::Graphics&) override;
+    void setLit(bool lit);
     void setTooltip(const juce::String& newTooltip);
     juce::String getTooltip() override;
+    void paint(juce::Graphics&) override;
+
+    // required side/mid amplitude ratio (scale-free "is it wide"),
+    static constexpr float kWidthDb = -20.0f;
+    // absolute side-peak floor (keeps near-silence grey).
+    static constexpr float kFloorDbfs = -80.0f;
+    static float dbToRatio(float db);
 
   private:
-    juce::String text_{"S/M: MONO"};
-    juce::Colour tint_{0xff5a6472};
+    bool lit_ = false;
     juce::String tooltipText;
   };
   SmChip smChip_;
 
-  juce::ToggleButton trackBtn_{"TRACK: LOCK"};
-  juce::TextButton chanBtn_{"CH: L"};
+  // A toggle that also flips on a vertical drag, like a real switch lever.
+  class ToggleKnob : public juce::TextButton {
+  public:
+    using juce::TextButton::TextButton;
+    void mouseDrag(const juce::MouseEvent& e) override {
+      const int dy = e.getDistanceFromDragStartY();
+      if (std::abs(dy) > 8) {
+        dragged_ = true;
+        setToggleState(dy > 0, juce::sendNotification);  // up = ON
+      }
+    }
+    void mouseUp(const juce::MouseEvent& e) override {
+      if (dragged_) {
+        dragged_ = false;
+        return;  // release after a drag must not double-flip
+      }
+      juce::TextButton::mouseUp(e);
+    }
+
+  private:
+    bool dragged_ = false;
+  };
+  ToggleKnob trackBtn_{"TRACK: LOCK"};
+
+  // Four-detent groove switch
+  class ModeSwitch : public juce::TextButton {
+  public:
+    using juce::TextButton::TextButton;
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent& e) override;
+    std::function<void(int)> onModeChange_;  // detent index 0..3
+  private:
+    void pick(const juce::MouseEvent& e);
+    bool dragged_ = false;
+  };
+  ModeSwitch chanBtn_;
+
   juce::Slider vZoom_, hZoom_;
-  juce::Rectangle<float> readoutRect_;
+
+  juce::Image caseImg;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ScopeView)
 };

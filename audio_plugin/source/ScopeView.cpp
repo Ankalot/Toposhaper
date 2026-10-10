@@ -13,6 +13,10 @@ int niceDiv(int viewLen) {
     }
   return std::max(1, juce::roundToInt(best));
 }
+
+// Detent centres under the printed L / R / L&R / L|R labels,
+// as fractions of the groove width. Re-measure from the case art.
+constexpr float kDetentX[4] = {0.128f, 0.285f, 0.53f, 0.84f};
 }  // namespace
 
 ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
@@ -20,90 +24,94 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
   trackBtn_.setToggleState(proc_.uiState().track, juce::dontSendNotification);
   trackBtn_.setTooltip(
       "Waveform tracking: ON = triggered (stable picture), OFF = scroll "
-      "(true-time, phosphor trail). LOCK aligns each frame to the previous "
-      "one by waveform correlation. Label shows LOCK / FREE / OFF.");
+      "(true-time).");
   trackBtn_.onClick = [this] {
     trailN_[0] = trailN_[1] = 0;
     updateModeLabel();
     repaint();
   };
-  addAndMakeVisible(trackBtn_);
 
-  chanBtn_.setTooltip(
-      "Display channel cycle: L -> L+R (overlay) -> R -> L|R (split). "
-      "Shift-click walks the cycle backwards. This is the only control "
-      "that changes what is drawn.");
-  chanBtn_.onClick = [this] {
-    // Cycle ring: L -> L+R -> R -> L|R -> L (overlay one click from L)
-    constexpr int kNext[4] = {2, 3, 1, 0};
-    constexpr int kPrev[4] = {3, 2, 0, 1};  // inverse ring for shift-click
-    const bool back = juce::ModifierKeys::getCurrentModifiers().isShiftDown();
-    chanMode_ = back ? kPrev[chanMode_] : kNext[chanMode_];
+  chanBtn_.onModeChange_ = [this](int mode) {
+    if (mode == chanMode_)
+      return;
+    chanMode_ = mode;  // drag: jump straight to the detent under cursor
     trailN_[0] = trailN_[1] = 0;
     updateChanLabel();
     repaint();
   };
-  addAndMakeVisible(chanBtn_);
+  chanBtn_.setTooltip(
+      "Display channel switch: L, R, L&R (overlay) or L|R (split).");
 
-  // Passive indicator chip: reports stereo width, never changes the layout,
-  // and no longer looks or behaves like a button.
+  // Passive stereo indicator chip
   smChip_.setTooltip(
-      "Side/mid energy of the visible window (indicator only): "
-      "grey = mono-ish, amber = wide. Use the CH button to change mode.");
-  addAndMakeVisible(smChip_);
+      "The indicator is active when the signal is stereo (the side "
+      "signal (L-R) peaks above " +
+      juce::String(SmChip::kWidthDb, 0) +
+      " dB relative to the mid (L+R) and above " +
+      juce::String(SmChip::kFloorDbfs, 0) + " dBFS absolute).");
 
   vZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
   vZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   vZoom_.setRange(-2.0, 5.0, 0.01);  // gain = 2^v: 0.25x .. 32x
   vZoom_.setValue(proc_.uiState().vExp, juce::dontSendNotification);
-  vZoom_.setTooltip("Vertical zoom (amplitude), shared by both channels");
+  vZoom_.setTooltip(
+      "Vertical zoom (amplitude), shared by both channels. It can also be "
+      "controlled using Ctrl/Shift + MWheel on the disaply.");
   vZoom_.setScrollWheelEnabled(false);
   vZoom_.onValueChange = [this] { repaint(); };
-  addAndMakeVisible(vZoom_);
 
   hZoom_.setSliderStyle(juce::Slider::LinearHorizontal);
   hZoom_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   hZoom_.setRange(0.0, 1000.0, 1.0);  // 256..32768 samples, log
   hZoom_.setValue(hFromLen(proc_.uiState().viewLen),
                   juce::dontSendNotification);
-  hZoom_.setTooltip("Horizontal zoom: visible window 256 .. 32768 samples");
+  hZoom_.setTooltip(
+      "Horizontal zoom: visible window 256 .. 32768 samples. It can also be "
+      "controlled using MWheel on the display.");
   hZoom_.setScrollWheelEnabled(false);
   hZoom_.onValueChange = [this] {
     trailN_[0] = trailN_[1] = 0;
     repaint();
   };
+
+  addAndMakeVisible(trackBtn_);
+  trackBtn_.setAlpha(0.0f);
+  addAndMakeVisible(chanBtn_);
+  chanBtn_.setAlpha(0.0f);
+  addAndMakeVisible(vZoom_);
+  vZoom_.setAlpha(0.0f);
   addAndMakeVisible(hZoom_);
+  hZoom_.setAlpha(0.0f);
+  addAndMakeVisible(smChip_);
+  vZoom_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+  hZoom_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+
+  trackBtn_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+  chanBtn_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+  vZoom_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+  hZoom_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+
+  caseImg = juce::ImageCache::getFromMemory(BinaryData::oscilloscope_png,
+                                            BinaryData::oscilloscope_pngSize);
 
   chanMode_ = proc_.uiState().chanMode;
   uiSeq_ = proc_.uiState().seq;
-  setOpaque(true);
+  setOpaque(false);
   startTimerHz(60);
   updateChanLabel();
 }
 
-void ScopeView::SmChip::setText(const juce::String& t) {
-  if (t != text_) {
-    text_ = t;
-    repaint();
-  }
-}
-
-void ScopeView::SmChip::setTint(juce::Colour c) {
-  if (c != tint_) {
-    tint_ = c;
+void ScopeView::SmChip::setLit(bool lit) {
+  if (lit != lit_) {
+    lit_ = lit;
     repaint();
   }
 }
 
 void ScopeView::SmChip::paint(juce::Graphics& g) {
-  const auto r = getLocalBounds().toFloat();
-  g.setColour(tint_.withAlpha(0.30f));
-  g.fillRoundedRectangle(r, ui::cornerSm);
-  g.setColour(tint_.withAlpha(0.85f));
-  g.drawRoundedRectangle(r, ui::cornerSm, 1.0f);
-  g.setColour(ui::text);
-  g.setFont(juce::Font(juce::FontOptions().withHeight(ui::fontChip)));
-  g.drawText(text_, getLocalBounds(), juce::Justification::centred, false);
+  const auto r = getLocalBounds().toFloat().reduced(1.0f);
+  g.setColour(lit_ ? ui::accentR : ui::chipIdle);
+  g.fillEllipse(r);
 }
 
 void ScopeView::SmChip::setTooltip(const juce::String& newTooltip) {
@@ -114,9 +122,45 @@ juce::String ScopeView::SmChip::getTooltip() {
   return tooltipText;
 }
 
+void ScopeView::ModeSwitch::pick(const juce::MouseEvent& e) {
+  const auto r = getLocalBounds().toFloat();
+  const float t =
+      juce::jlimit(0.0f, 1.0f, (e.position.x - r.getX()) / r.getWidth());
+  int best = 0;
+  float bestD = 1.0e9f;
+  for (int i = 0; i < 4; ++i) {  // nearest printed label wins
+    const float d = std::abs(t - kDetentX[i]);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  if (onModeChange_)
+    onModeChange_(best);
+}
+
+void ScopeView::ModeSwitch::mouseDown(const juce::MouseEvent& e) {
+  dragged_ = false;
+  pick(e);  // the press lands on the detent under the cursor at once
+}
+
+void ScopeView::ModeSwitch::mouseDrag(const juce::MouseEvent& e) {
+  if (std::abs(e.getDistanceFromDragStartX()) < 4.0f &&
+      std::abs(e.getDistanceFromDragStartY()) < 4.0f)
+    return;  // jitter this small is still just a press
+  dragged_ = true;
+  pick(e);
+}
+
+void ScopeView::ModeSwitch::mouseUp(const juce::MouseEvent&) {
+  dragged_ = false;
+  // No TextButton::mouseUp on purpose: the onClick cycle is dead,
+  // a release must never step away from where the user pressed.
+}
+
 juce::Rectangle<float> ScopeView::traceRect() const {
-  auto r = getLocalBounds().toFloat();
-  return r.withTop(r.getY() + ui::stripH).reduced(2.0f);
+  const auto r = getLocalBounds().toFloat();
+  return {14.0f, 40.0f, 517.0f, 300.0f};
 }
 
 juce::Rectangle<float> ScopeView::laneRect(int ch) const {
@@ -139,29 +183,21 @@ bool ScopeView::channelActive(int ch) const {
 }
 
 int ScopeView::lenFromH(double t) const {
-  return juce::jlimit(256, 32768,
-                      juce::roundToInt(256.0 * std::pow(128.0, t / 1000.0)));
+  return juce::jlimit(
+      256, 32768,
+      juce::roundToInt(256.0 * std::pow(128.0, (1000.0 - t) / 1000.0)));
 }
-
 double ScopeView::hFromLen(int len) const {
-  return 1000.0 * std::log(static_cast<double>(len) / 256.0) / std::log(128.0);
+  return 1000.0 -
+         1000.0 * std::log(static_cast<double>(len) / 256.0) / std::log(128.0);
 }
 
 void ScopeView::resized() {
-  auto strip = getLocalBounds().removeFromTop(ui::stripH).reduced(2);
-  trackBtn_.setBounds(strip.removeFromLeft(112));
-  strip.removeFromLeft(ui::stripGap);
-  chanBtn_.setBounds(strip.removeFromLeft(58));
-  strip.removeFromLeft(ui::stripGap);
-  auto chipRect = strip.removeFromLeft(78);
-  smChip_.setBounds(chipRect.withSizeKeepingCentre(
-      chipRect.getWidth(), chipRect.getHeight() - ui::stripGap));
-  strip.removeFromLeft(ui::stripGap);
-  vZoom_.setBounds(strip.removeFromLeft(80));
-  strip.removeFromLeft(ui::stripGap);
-  hZoom_.setBounds(strip.removeFromLeft(130));
-  strip.removeFromLeft(10);
-  readoutRect_ = strip.toFloat();
+  trackBtn_.setBounds(juce::Rectangle<int>(565, 111, 27, 27));  // LOCK
+  smChip_.setBounds(juce::Rectangle<int>(589, 152, 20, 20));    // CHS Indicator
+  chanBtn_.setBounds(juce::Rectangle<int>(536, 203, 83, 18));   // CHS Groove
+  vZoom_.setBounds(juce::Rectangle<int>(567, 254, 27, 27));     // V-ZOOM
+  hZoom_.setBounds(juce::Rectangle<int>(567, 303, 27, 27));     // H-ZOOM
   trailN_[0] = trailN_[1] = 0;
 }
 
@@ -176,7 +212,7 @@ void ScopeView::mouseWheelMove(const juce::MouseEvent& e,
   if (e.mods.isCtrlDown() || e.mods.isCommandDown() || e.mods.isShiftDown())
     vZoom_.setValue(vZoom_.getValue() + d * 0.35, juce::sendNotificationSync);
   else
-    hZoom_.setValue(hZoom_.getValue() - d * 30.0, juce::sendNotificationSync);
+    hZoom_.setValue(hZoom_.getValue() + d * 30.0, juce::sendNotificationSync);
 }
 
 void ScopeView::timerCallback() {
@@ -208,40 +244,29 @@ void ScopeView::updateChanLabel() {
     chanBtn_.setButtonText(s);
 }
 
-void ScopeView::updateSmMetric() {
-  if (!hasR_ || spanN_[0] == 0 || spanN_[1] == 0) {
-    smDb_ = -120.0f;
-    return;
-  }
-  const size_t stop = std::min(std::min(spanN_[0], spanN_[1]),
-                               static_cast<size_t>(viewStart_ + viewLen_));
-  double m2 = 0.0, s2 = 0.0;
-  for (size_t i = static_cast<size_t>(viewStart_); i < stop; ++i) {
-    const float l = span_[0][i], r = span_[1][i];
-    const float mm = 0.5f * (l + r), ss = 0.5f * (l - r);
-    m2 += static_cast<double>(mm) * mm;
-    s2 += static_cast<double>(ss) * ss;
-  }
-  smDb_ =
-      (m2 > 1e-12) ? static_cast<float>(10.0 * std::log10(s2 / m2)) : -120.0f;
+float ScopeView::SmChip::dbToRatio(float db) {
+  return std::pow(10.0f, db / 20.0f);
 }
 
 void ScopeView::updateSmChip() {
-  juce::String txt;
-  juce::Colour col = ui::chipIdle;
-  if (!hasR_ || smDb_ < -40.0f) {
-    txt = "S/M: MONO";
-  } else {
-    txt = "S/M " +
-          juce::String(static_cast<int>(juce::jlimit(-99.0f, 99.0f, smDb_))) +
-          "dB";
-    if (smDb_ > -10.0f)
-      col = ui::accentR;  // wide: light up in the R hue
-    else
-      col = ui::chipIdle.brighter(0.2f);
+  // Two-part gate; both thresholds live in SmChip as dB constants:
+  // 1) scale-free width: side peak vs mid peak ratio,
+  // 2) absolute floor: near-silent passages stay grey.
+  const float widthRatio = SmChip::dbToRatio(SmChip::kWidthDb);
+  const float floorLin = SmChip::dbToRatio(SmChip::kFloorDbfs);
+  bool lit = false;
+  if (hasR_) {
+    const size_t stop = std::min(std::min(spanN_[0], spanN_[1]),
+                                 static_cast<size_t>(viewStart_ + viewLen_));
+    float sidePeak = 0.0f, midPeak = 0.0f;
+    for (size_t i = static_cast<size_t>(viewStart_); i < stop; ++i) {
+      const float l = span_[0][i], r = span_[1][i];
+      sidePeak = std::max(sidePeak, std::abs(l - r));
+      midPeak = std::max(midPeak, std::abs(l + r));
+    }
+    lit = sidePeak > floorLin && sidePeak > widthRatio * midPeak;
   }
-  smChip_.setText(txt);
-  smChip_.setTint(col);
+  smChip_.setLit(lit);
 }
 
 void ScopeView::pushUiState() {
@@ -329,10 +354,10 @@ void ScopeView::refresh() {
                                  ? spanStart_[prim_] - prevSpanStart_
                                  : 0;
         int pred = prevVs_ - static_cast<int>(adv);
-        pred = juce::jlimit(0, static_cast<int>(spanN_[prim_]) - viewLen_, pred);
-        const int aligned = findTriggerAligned(span_[prim_].data(),
-                                               spanN_[prim_], pred,
-                                               trigWidth_ / 2);
+        pred =
+            juce::jlimit(0, static_cast<int>(spanN_[prim_]) - viewLen_, pred);
+        const int aligned = findTriggerAligned(
+            span_[prim_].data(), spanN_[prim_], pred, trigWidth_ / 2);
         if (aligned >= 0)
           vs = aligned;
       }
@@ -364,8 +389,6 @@ void ScopeView::refresh() {
     buildPaths(ch, laneRect(ch), scale, true);
   }
 
-  if ((frame_++ % 10) == 0)
-    updateSmMetric();
   updateModeLabel();
   updateChanLabel();
   updateSmChip();
@@ -395,7 +418,10 @@ int ScopeView::findTrigger(const float* s, size_t n) const {
   return best;
 }
 
-int ScopeView::findTriggerAligned(const float* s, size_t n, int center, int radius) const {
+int ScopeView::findTriggerAligned(const float* s,
+                                  size_t n,
+                                  int center,
+                                  int radius) const {
   if (trigBuf_.empty() || trigBufNorm_ < 1e-9f)
     return -1;
   const int W = trigWidth_;
@@ -588,24 +614,24 @@ void ScopeView::drawDbGrid(juce::Graphics& g,
     g.setColour(L.db == 0 ? ui::zero : ui::grid);
     g.drawLine({r.getX(), L.y, r.getRight(), L.y});
     g.setColour(ui::text);
-    const int ly = juce::jlimit(juce::roundToInt(r.getY()) + 1,
-                                juce::roundToInt(r.getBottom()) - 13,
-                                juce::roundToInt(L.y) - 12);
-    g.drawText(juce::String(L.db) + " dB", juce::roundToInt(r.getX()) + 2, ly,
-               52, juce::roundToInt(ui::lineBoxH), juce::Justification::left,
-               false);
+    const int textY = juce::roundToInt(L.y) - 12;
+    const int minY = juce::roundToInt(r.getY()) + 20;
+    const int maxY = juce::roundToInt(r.getBottom()) - 35;
+    if (textY >= minY && textY <= maxY) {
+      g.drawText(juce::String(L.db) + " dB", juce::roundToInt(r.getX()) + 2,
+                 textY, 52, juce::roundToInt(ui::lineBoxH),
+                 juce::Justification::left, false);
+    }
   }
 }
 
 void ScopeView::paint(juce::Graphics& g) {
-  const auto bounds = getLocalBounds().toFloat();
-  g.fillAll(ui::scope);
-  g.setColour(ui::frame);
-  g.drawRect(bounds, ui::frameW);
-
   const auto full = traceRect();
   if (full.isEmpty())
     return;
+  g.saveState();
+  g.reduceClipRegion(full.toNearestInt());
+
   const double sr = proc_.getSampleRate();
   const auto smallFont =
       juce::Font(juce::FontOptions().withHeight(ui::fontSmall));
@@ -613,7 +639,24 @@ void ScopeView::paint(juce::Graphics& g) {
   const float scale = full.getHeight() * 0.45f * vZoomGain_;
   const bool split = stereo_ && chanMode_ == 3;
 
-  // Vertical grid over the full rect: shared time axis in every mode
+  // --- HUD line metrics: [L][R] + spl | ms | Hz, top right of the glass. ---
+  juce::String infoTxt = juce::String(viewLen_) + " spl";
+  if (sr > 0.0)
+    infoTxt += "  |  " + juce::String(1000.0 * viewLen_ / sr, 1) + " ms  |  " +
+               juce::String(sr / viewLen_, 1) + " Hz";
+  const float infoTextW = static_cast<float>(
+      juce::GlyphArrangement::getStringWidthInt(smallFont, infoTxt));
+  int swatches = 0;
+  for (int ch = 0; ch < 2; ++ch)
+    if (channelActive(ch) && spanN_[ch] > 0)
+      ++swatches;
+  const float infoW =
+      static_cast<float>(swatches) * (ui::chipSize + 4.0f) + 8.0f + infoTextW;
+  const float infoLeft = full.getRight() - 10.0f - infoW;
+  const juce::Rectangle<float> infoPlate(infoLeft - 4.0f, full.getY(),
+                                         infoW + 10.0f, ui::lineBoxH + 4.0f);
+
+  // Vertical grid
   const int div = niceDiv(viewLen_);
   for (int ago = 0; ago <= viewLen_; ago += div) {
     const float x =
@@ -622,28 +665,32 @@ void ScopeView::paint(juce::Graphics& g) {
       break;
     g.setColour(ago == 0 ? ui::zero : ui::grid);
     g.drawLine({x, full.getY(), x, full.getBottom()});
-    const bool inGutter = x < full.getX() + ui::gutterL;  // left col = dB
+    const bool inGutter = x < full.getX() + ui::gutterL;
     if (!inGutter) {
-      g.setColour(ui::text);
-      g.drawText(juce::String(ago), juce::roundToInt(x) + 2,
-                 juce::roundToInt(full.getY()) + 2, 64,
-                 juce::roundToInt(ui::lineBoxH), juce::Justification::left,
-                 false);
-      if (sr > 0.0 && ago > 0)
+      if (x + 46.0f < infoLeft) {
+        g.setColour(ui::text);
+        g.drawText(juce::String(ago), juce::roundToInt(x) + 2,
+                   juce::roundToInt(full.getY()) + 2, 44,
+                   juce::roundToInt(ui::lineBoxH), juce::Justification::left,
+                   false);
+      }
+      if (sr > 0.0 && ago > 0) {
+        g.setColour(ui::text);
         g.drawText(
             juce::String(1000.0 * ago / sr, 2) + "ms", juce::roundToInt(x) + 2,
             juce::roundToInt(full.getBottom()) - 14, 72,
             juce::roundToInt(ui::lineBoxH), juce::Justification::left, false);
+      }
     }
   }
 
-  // Horizontal dB grid: one pass per distinct lane
+  // Horizontal dB grid
   drawDbGrid(g, laneRect(0), scale);
   if (split)
     drawDbGrid(g, laneRect(1), scale);
 
-  // Traces per active channel, clipped to their lane
-  for (int ch = 0; ch < 2; ++ch) {
+  // Traces, trails, markers
+  for (int ch = 1; ch >= 0; --ch) {
     if (!channelActive(ch) || spanN_[ch] == 0)
       continue;
     const auto r = laneRect(ch);
@@ -660,7 +707,6 @@ void ScopeView::paint(juce::Graphics& g) {
       g.setColour(ui::traceOf(ch).withAlpha(alpha));
       g.strokePath(trail_[ch][i], juce::PathStrokeType(ui::thinW));
     }
-    // Markers of this channel, positioned on its own trace/lane
     const uint64_t viewAbs = spanStart_[ch] + static_cast<uint64_t>(viewStart_);
     const float cy = r.getCentreY();
     for (size_t m = 0; m < markN_; ++m) {
@@ -685,35 +731,80 @@ void ScopeView::paint(juce::Graphics& g) {
     g.restoreState();
   }
 
-  // Legend chips, top-right of the trace area (L left of R, as convention)
+  // --- HUD: panel + channel swatches + single-line readout ---
+  g.setColour(ui::scope);
+  g.fillRoundedRectangle(infoPlate, 4.0f);
+  float cursor_ = infoLeft;
+  g.setFont(smallFont);
   for (int ch = 0; ch < 2; ++ch) {
     if (!channelActive(ch) || spanN_[ch] == 0)
       continue;
-    const int pos = stereo_ ? ch : 1;  // single chip hugs the right edge
-    const float x =
-        full.getRight() - 22.0f - ui::chipStep * static_cast<float>(1 - pos);
     g.setColour(ui::traceOf(ch));
-    g.fillRoundedRectangle(x, full.getY() + 3.0f, ui::chipSize, ui::chipSize,
-                           ui::cornerSm);
+    g.fillRoundedRectangle(cursor_, full.getY() + 3.0f, ui::chipSize,
+                           ui::chipSize, ui::cornerSm);
     g.setColour(ui::scope);
     g.setFont(juce::Font(juce::FontOptions().withHeight(ui::fontTiny)));
-    g.drawText(ch == 0 ? "L" : "R", juce::roundToInt(x),
+    g.drawText(ch == 0 ? "L" : "R", juce::roundToInt(cursor_),
                juce::roundToInt(full.getY()) + 3,
                juce::roundToInt(ui::chipSize), juce::roundToInt(ui::chipSize),
                juce::Justification::centred, false);
+    g.setFont(smallFont);
+    cursor_ += ui::chipSize + 4.0f;
   }
-  g.setFont(smallFont);
+  g.setColour(ui::text);
+  g.drawText(infoTxt, juce::roundToInt(cursor_ + 8.0f),
+             juce::roundToInt(full.getY() + 3.0f),
+             juce::roundToInt(infoTextW + 4.0f), juce::roundToInt(ui::lineBoxH),
+             juce::Justification::centredLeft, false);
 
-  // Readout: visible window in samples / ms / window-Hz
-  if (!readoutRect_.isEmpty()) {
-    juce::String txt = juce::String(viewLen_) + " spl";
-    if (sr > 0.0)
-      txt += "  |  " + juce::String(1000.0 * viewLen_ / sr, 1) + " ms  |  " +
-             juce::String(sr / viewLen_, 1) + " Hz";
-    g.setColour(ui::text);
-    g.drawText(txt, readoutRect_.toNearestInt(),
-               juce::Justification::centredLeft);
+  g.restoreState();
+
+  // Oscilloscope overlay
+  g.drawImage(caseImg, getLocalBounds().toFloat());
+
+  // --- Notches over the printed rotary knobs ---
+  auto knobTick = [&g](float cx, float cy, float t) {
+    // 7 hours (t=0) -> 12 hours (t=0.5) -> 5 hours (t=1)
+    const float a = juce::MathConstants<float>::pi *
+                    (-0.75f + 1.5f * juce::jlimit(0.0f, 1.0f, t));
+    const juce::Point<float> d{std::sin(a), -std::cos(a)};
+    g.setColour(ui::black);
+    const float radius = 12.5f;
+    g.drawLine(juce::Line<float>(cx, cy, cx + d.x * radius, cy + d.y * radius),
+               2.0f);
+  };
+  knobTick(956.0f - 376.0f, 570.0f - 303.0f,
+           static_cast<float>((vZoom_.getValue() - vZoom_.getMinimum()) /
+                              (vZoom_.getMaximum() - vZoom_.getMinimum())));
+  knobTick(956.0f - 376.0f, 619.0f - 303.0f,
+           static_cast<float>(hZoom_.getValue() / 1000.0));
+
+  // --- LOCK: two-position toggle knob (straight lever + hub), as in art ---
+  const auto lockC = trackBtn_.getBounds().toFloat().getCentre();
+  const bool on = trackBtn_.getToggleState();
+  // ON aims at the printed "ON" label (10:30), OFF at "OFF" (1:30).
+  const float ang = juce::MathConstants<float>::pi * (on ? -0.25f : 0.25f);
+  const juce::Point<float> d{std::sin(ang), -std::cos(ang)};
+  g.setColour(ui::black);  // same ink as the printed labels
+  // Constant-width lever with a flat tip: no taper, no arrowhead
+  g.drawLine({lockC.x, lockC.y, lockC.x + d.x * 22.0f, lockC.y + d.y * 22.0f},
+             7.0f);
+  // Hub disc last so the lever root reads as a clean pivot
+  constexpr float kHubR = 8.0f;
+  g.fillEllipse(lockC.x - kHubR, lockC.y - kHubR, kHubR * 2.0f, kHubR * 2.0f);
+
+  // --- CHS groove: four-detent notch (black disc + stem, as in art) ---
+  {
+    const auto gr = chanBtn_.getBounds().toFloat();
+    const int mode = juce::jlimit(0, 3, chanMode_);
+    const float cx = gr.getX() + kDetentX[mode] * gr.getWidth();
+    const float cy = gr.getCentreY();
+    g.setColour(ui::black);
+    // Stem: from above the groove top down into the disc
+    g.fillRect(cx - 2.0f, gr.getY() - 6.0f, 4.0f,
+               (cy - 3.0f) - (gr.getY() - 6.0f));
+    // Disc: the knob body sitting in the groove
+    g.fillEllipse(cx - 7.0f, cy - 7.0f, 14.0f, 14.0f);
   }
 }
-
 }  // namespace audio_plugin

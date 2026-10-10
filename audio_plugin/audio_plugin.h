@@ -20,12 +20,13 @@ END_JUCE_MODULE_DECLARATION
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <BinaryData.h>
 #include "include/UiTokens.h"
 #include "include/WarpCurve.h"
 #include "include/WarpCurveEditor.h"
 #include "include/ScopeView.h"
 #include "include/FactoryPresets.h"
-#include "include/PresetBar.h"
+#include "include/PresetMenu.h"
 #include "include/PluginProcessor.h"
 #include "include/PluginEditor.h"
 

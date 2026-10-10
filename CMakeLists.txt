@@ -56,7 +56,7 @@ cpmaddpackage(
   NAME
   JUCE
   GIT_TAG
-  8.0.12
+  8.0.15
   GITHUB_REPOSITORY
   juce-framework/JUCE
   SOURCE_DIR
@@ -126,6 +126,20 @@ target_compile_definitions(AudioPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=
 # (and migrating to JUCE modules at a late development stage is a nightmare, trust me).
 juce_add_module(audio_plugin ALIAS_NAMESPACE ankalot)
 
+juce_add_binary_data(PluginAssets
+    SOURCES
+        audio_plugin/assets/background.png
+        audio_plugin/assets/oscilloscope.png
+        audio_plugin/assets/oversampling_handle.png
+        audio_plugin/assets/drive_flask.png
+        audio_plugin/assets/thresh_flask.png
+        audio_plugin/assets/smooth_flask.png
+        audio_plugin/assets/smooth_mode.png
+        audio_plugin/assets/fonts/OswaldMedium.ttf
+        audio_plugin/assets/fonts/CaveatRegular.ttf
+)
+set_target_properties(PluginAssets PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+
 # In the following, we re-export some of the compile-time definitions derived from arguments of
 # juce_add_plugin(). This is necessary to maintain consistent behavior in built plugins and in tests.
 # Check juce/extras/Build/CMake/JUCEUtils.cmake to see how they are defined for the AudioPlugin target.
@@ -150,7 +164,7 @@ target_compile_options(audio_plugin INTERFACE "${PROJECT_WARNINGS_CXX}")
 # We need to link the plugin targets with the module containing our code.
 target_link_libraries(
   AudioPlugin
-  PRIVATE ankalot::audio_plugin
+  PRIVATE ankalot::audio_plugin PluginAssets
   PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags
 )
 

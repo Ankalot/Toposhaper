@@ -1,4 +1,5 @@
 # Toposhaper
+![alt text](example.png)
 
 A topological waveshaper. It detects persistent extrema in the incoming
 signal, turns them into anchors/seams that split the stream into sections,
