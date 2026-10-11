@@ -432,7 +432,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
                    presetMenu.markModified();
                  }),
       scopeView(processorRef),
-      osPanel_(p),
+      osPanel(p),
       driveFlask(makeFlaskDrive()),
       threshFlask(makeFlaskThresh()),
       smoothFlask(makeFlaskSmooth()),
@@ -449,7 +449,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   addAndMakeVisible(warpEditor);
 
   addAndMakeVisible(foldSwitch);
-  addAndMakeVisible(osPanel_);
+  addAndMakeVisible(osPanel);
   addAndMakeVisible(smoothTag);
 
   startTimerHz(10);  // catch external state/preset loads
@@ -476,8 +476,8 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   bubble_.setInterceptsMouseClicks(false, false);
   bubble_.setVisible(false);
 
-  noseBtn_.onClick = [this] { say("MEOW!", 1500); };
-  addAndMakeVisible(noseBtn_);
+  noseBtn.onClick = [this] { say("MEOW!", 1500); };
+  addAndMakeVisible(noseBtn);
 
   setLookAndFeel(&customLF);
   setResizable(false, false);
@@ -570,9 +570,9 @@ void PluginEditor::resized() {
   smoothFlask.setBounds(256, 391, 110, 241);
   smoothTag.setBounds(240, 462, 106, 90);
   presetMenu.setBounds(92, 269, 95, 48);
-  osPanel_.setBounds(852, 89, 122, 154);
+  osPanel.setBounds(852, 89, 122, 154);
   scopeView.setBounds(376, 303, 624, 354);
-  noseBtn_.setBounds(178, 180, 10, 10);
+  noseBtn.setBounds(178, 180, 10, 10);
 }
 
 }  // namespace audio_plugin

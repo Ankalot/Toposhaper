@@ -10,7 +10,7 @@ add_executable(AudioPluginTest
 )
 
 target_link_libraries(AudioPluginTest PRIVATE 
-    ankalot::audio_plugin 
+    ankalot::audio_plugin PluginAssets
     GTest::gtest
 )
 

@@ -240,7 +240,7 @@ void PresetMenu::showMenu() {
                       pr.source == proc_.presetSource() && !proc_.presetDirty();
     auto act = [this, pr] { apply(pr.xml, pr.name, pr.source); };
     juce::PopupMenu::Item item;
-    item.itemID = ++itemId;  // <- без этой строки action не вызывается
+    item.itemID = ++itemId;
     item.text = pr.name;
     item.isEnabled = true;
     item.isTicked = tick;

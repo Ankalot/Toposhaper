@@ -184,7 +184,7 @@ private:
   WarpCurveEditor warpEditor;
   FoldSwitch foldSwitch;
   ScopeView scopeView;
-  OsPanel osPanel_;
+  OsPanel osPanel;
   PresetMenu presetMenu;
 
   // Declared after the widgets so they outlive the attachments they bind
@@ -198,7 +198,7 @@ private:
   juce::uint32 tipSince_ = 0;  // hover start, for the show delay
 
   void say(const juce::String& text, juce::uint32 ms);  // cat speaks on demand
-  RoundBtn noseBtn_;
+  RoundBtn noseBtn;
   juce::String sayText_;
   juce::uint32 sayUntil_ = 0;
 

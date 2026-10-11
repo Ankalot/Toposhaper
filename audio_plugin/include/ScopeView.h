@@ -11,7 +11,7 @@ struct ScopeMarker;
 // inspection (L / R, with ghost + delta fill), L+R overlay and L|R split on
 // shared time/vertical axes and a shared trigger. Passive S/M width chip
 // indicates stereo divergence without ever changing the layout by itself;
-// clicking it jumps to the overlay. View controls are UI-local (not APVTS).
+// View controls are UI-local (not APVTS).
 class ScopeView : public juce::Component, private juce::Timer {
 public:
   explicit ScopeView(PluginProcessor& p);
