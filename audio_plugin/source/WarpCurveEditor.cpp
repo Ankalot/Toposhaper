@@ -139,7 +139,7 @@ float WarpCurveEditor::distToSegmentCurve(juce::Point<float> p, int s) const {
   return best;
 }
 
-WarpCurveEditor::Hit WarpCurveEditor::hitTest(juce::Point<float> p) const {
+WarpCurveEditor::Hit WarpCurveEditor::hitTestCurve(juce::Point<float> p) const {
   Hit best;
   float bestD = ui::hitR;
   for (int i = 1; i < curve_.numPoints() - 1; ++i) {  // interior points first
@@ -180,7 +180,7 @@ void WarpCurveEditor::timerCallback() {
 }
 
 void WarpCurveEditor::mouseDown(const juce::MouseEvent& e) {
-  const auto hit = hitTest(e.position);
+  const auto hit = hitTestCurve(e.position);
   grab_ = hit.kind;
   grabIndex_ = hit.index;
   if (hit.kind == Kind::point) {
@@ -217,7 +217,7 @@ void WarpCurveEditor::mouseUp(const juce::MouseEvent&) {
 }
 
 void WarpCurveEditor::mouseMove(const juce::MouseEvent& e) {
-  const auto h = hitTest(e.position);
+  const auto h = hitTestCurve(e.position);
   if (h.kind != hover_.kind || h.index != hover_.index) {
     hover_ = h;
     setMouseCursor(h.kind == Kind::none
@@ -228,7 +228,7 @@ void WarpCurveEditor::mouseMove(const juce::MouseEvent& e) {
 }
 
 void WarpCurveEditor::mouseDoubleClick(const juce::MouseEvent& e) {
-  const auto hit = hitTest(e.position);
+  const auto hit = hitTestCurve(e.position);
   if (hit.kind == Kind::point) {  // double-click on a point removes it
     if (curve_.removePoint(hit.index))
       notify();

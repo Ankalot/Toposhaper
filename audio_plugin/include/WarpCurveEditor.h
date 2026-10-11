@@ -35,7 +35,7 @@ private:
   juce::Rectangle<float> readoutRect() const;
   juce::Point<float> toUI(const WarpCurve::Node& n) const;
   WarpCurve::Node fromUI(juce::Point<float> p) const;
-  Hit hitTest(juce::Point<float> p) const;
+  Hit hitTestCurve(juce::Point<float> p) const;
   float distToSegmentCurve(juce::Point<float> p, int s) const;
   void notify();
   void timerCallback() override;  // catch external edits (state/preset load)

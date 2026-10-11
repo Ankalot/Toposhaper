@@ -47,7 +47,7 @@ private:
   juce::String text_;
   juce::TextLayout layout_;
   bool layoutDirty_ = true;
-  juce::Font font_;
+  juce::Font font_{juce::FontOptions{}};
 };
 
 // Three-way radio switch bank over the printed OVER SAMPLING panel: the

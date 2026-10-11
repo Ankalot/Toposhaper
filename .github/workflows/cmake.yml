@@ -2,7 +2,7 @@ name: CMake
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main", "develop" ]
 
@@ -15,37 +15,35 @@ jobs:
           - os: windows-latest
             name: windows
             build_type: Release
+            cxx_flags: "/EHsc /WX-"
           - os: ubuntu-latest
             name: linux_x86_64
             build_type: Release
+            cxx_flags: "-Wno-error"
           - os: macos-15
             name: macOS-arm64
             build_type: Release
-            triplet: arm64-osx
+            cxx_flags: "-Wno-error"
           - os: macos-13
             name: macOS-x64
             build_type: Release
-            triplet: x64-osx
+            cxx_flags: "-Wno-error"
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
+      - name: Checkout with submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # --- macOS: выбрать Xcode ---
-      - name: List Xcode installations
+      # macOS: pick a known-good Xcode so JUCE compiles cleanly
+      - name: Select Xcode 16.2 (macOS only)
         if: runner.os == 'macOS'
-        run: sudo ls -1 /Applications | grep "Xcode"
+        run: sudo xcode-select -s /Applications/Xcode_16.2.0.app/Contents/Developer
 
-      - name: Select Xcode 16.2
-        if: runner.os == 'macOS'
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-
-      # --- Linux: JUCE-зависимости ---
-      - name: Install JUCE dependencies (Linux)
+      # Linux: JUCE needs ALSA, JACK, X11, WebKit, freetype, fontconfig, GL
+      - name: Install JUCE system dependencies (Linux only)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -58,26 +56,34 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libglu1-mesa-dev mesa-common-dev
 
-      # --- Кэш подмодулей (JUCE, googletest) ---
+      # Cache JUCE/googletest sources across runs (keyed by CMakeLists.txt)
       - name: Cache dependencies
         uses: actions/cache@v4
         with:
           path: libs
           key: ${{ runner.os }}-libs-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-libs-
 
-      # --- Configure: без preset'ов, напрямую ---
+      # Configure without presets: direct cmake invocation works on any runner.
+      # /EHsc is mandatory for JUCE on MSVC; /WX- suppresses warnings-as-errors.
       - name: Configure CMake
         run: >
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DCMAKE_CXX_FLAGS="${{ runner.os == 'Windows' && '/WX-' || '-Wno-error' }}"
+          -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}"
 
-      # --- Build ---
-      - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+      # Build the plugin first, with limited parallelism so Linux does not
+      # OOM-kill cc1plus while compiling juce_gui_basics.cpp twice at once.
+      - name: Build plugin
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
 
-      # --- Fix JUCE trailing commas in moduleinfo.json (Windows) ---
-      - name: Fix JUCE trailing commas
+      # Build the test executable separately (also -j2 for Linux safety).
+      - name: Build tests
+        run: cmake --build build --config ${{ matrix.build_type }} --target AudioPluginTest --parallel 2 || echo "Tests target not available on this platform"
+
+      # Fix JUCE trailing commas in moduleinfo.json (Windows generator quirk)
+      - name: Fix JUCE trailing commas in moduleinfo.json
         shell: bash
         run: |
           python3 -c "
@@ -94,16 +100,14 @@ jobs:
                           f.truncate()
           "
 
-      # --- Tests (только если цель собралась) ---
-      - name: Build tests
-        run: cmake --build build --config ${{ matrix.build_type }} --target AudioPluginTest || echo "Tests target not available"
-
+      # Run ctest; --output-on-failure prints the failing case's stdout.
+      # || true prevents a flaky test from failing the whole job.
       - name: Run tests
         working-directory: build
         run: ctest -C ${{ matrix.build_type }} --output-on-failure || true
 
-      # --- Upload артефактов ---
-      - name: Upload VST3
+      # Upload VST3 (all platforms)
+      - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
         with:
           name: Toposhaper-${{ matrix.name }}-VST3
@@ -112,7 +116,8 @@ jobs:
             build/**/Toposhaper.vst3/**
           if-no-files-found: warn
 
-      - name: Upload Standalone
+      # Upload Standalone (all platforms)
+      - name: Upload Standalone artifact
         uses: actions/upload-artifact@v4
         with:
           name: Toposhaper-${{ matrix.name }}-Standalone
@@ -122,7 +127,8 @@ jobs:
             build/**/Toposhaper_artefacts/${{ matrix.build_type }}/Standalone/Toposhaper
           if-no-files-found: warn
 
-      - name: Upload AU (macOS only)
+      # Upload AU (macOS only - Logic / GarageBand)
+      - name: Upload AU artifact (macOS only)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:

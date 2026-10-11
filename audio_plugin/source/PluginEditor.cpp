@@ -388,7 +388,7 @@ void FoldSwitch::engage(bool folding) {
   proc_.warp().setMonotonicLock(!folding);  // Y = fold => lock off
   proc_.warpEdited();                       // rebake LUT on the audio thread
   if (onDirty_)
-    onDirty_;  // lock is part of the warp tree = preset state
+    onDirty_();  // lock is part of the warp tree = preset state
   sync();
 }
 
@@ -425,20 +425,20 @@ void FoldSwitch::paint(juce::Graphics& g) {
 PluginEditor::PluginEditor(PluginProcessor& p)
     : AudioProcessorEditor(&p),
       processorRef(p),
-      customLF(),
       warpEditor(processorRef.warp(),
                  [this] {
                    processorRef.warpEdited();
                    presetMenu.markModified();
                  }),
+      foldSwitch(processorRef, [this] { presetMenu.markModified(); }),
       scopeView(processorRef),
       osPanel(p),
       driveFlask(makeFlaskDrive()),
       threshFlask(makeFlaskThresh()),
       smoothFlask(makeFlaskSmooth()),
-      foldSwitch(processorRef, [this] { presetMenu.markModified(); }),
       smoothTag(processorRef),
-      presetMenu(p) {
+      presetMenu(p),
+      customLF() {
   addAndMakeVisible(scopeView);
 
   addAndMakeVisible(driveFlask);
