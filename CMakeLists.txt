@@ -173,3 +173,7 @@ enable_testing()
 
 # Adds all the targets configured in the "test" folder.
 add_subdirectory(test)
+
+if(MSVC)
+  target_compile_options(AudioPluginTest PRIVATE /EHsc)
+endif()
