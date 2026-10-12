@@ -2,32 +2,17 @@ name: CMake
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            name: windows
-            build_type: Release
-            cxx_flags: "/EHsc /WX-"
-          - os: ubuntu-latest
-            name: linux_x86_64
-            build_type: Release
-            cxx_flags: "-Wno-error"
-          - os: macos-15
-            name: macOS-arm64
-            build_type: Release
-            cxx_flags: "-Wno-error"
-          - os: macos-13
-            name: macOS-x64
-            build_type: Release
-            cxx_flags: "-Wno-error"
+        os: [macos-15, macos-15-intel, windows-latest, ubuntu-latest]
+        build_type: [Release]
 
     runs-on: ${{ matrix.os }}
 
@@ -38,57 +23,128 @@ jobs:
           submodules: recursive
 
       # macOS: pick a known-good Xcode so JUCE compiles cleanly
-      - name: Select Xcode 16.2 (macOS only)
-        if: runner.os == 'macOS'
-        run: sudo xcode-select -s /Applications/Xcode_16.2.0.app/Contents/Developer
+      - name: List Xcode installations
+        if: matrix.os == 'macos-15' || matrix.os == 'macos-15-intel'
+        run: sudo ls -1 /Applications | grep "Xcode"
 
-      # Linux: JUCE needs ALSA, JACK, X11, WebKit, freetype, fontconfig, GL
-      - name: Install JUCE system dependencies (Linux only)
-        if: runner.os == 'Linux'
+      - name: Select Xcode 16.4
+        if: matrix.os == 'macos-15' || matrix.os == 'macos-15-intel'
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+
+      # vcpkg for all Unix-like platforms
+      - name: Setup vcpkg (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git
+          ./vcpkg/bootstrap-vcpkg.sh
+        shell: bash
+
+      # vcpkg for Windows
+      - name: Setup vcpkg (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git
+          .\vcpkg\bootstrap-vcpkg.bat
+        shell: cmd
+
+      # JUCE needs ALSA, X11, WebKit2GTK, freetype, fontconfig, GL on Linux
+      - name: Install JUCE dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libasound2-dev libjack-jackd2-dev ladspa-sdk \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            ladspa-sdk \
             libcurl4-openssl-dev \
-            libfreetype6-dev libfontconfig1-dev \
-            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
-            libxinerama-dev libxrandr-dev libxrender-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
             libwebkit2gtk-4.1-dev \
-            libglu1-mesa-dev mesa-common-dev
+            libglu1-mesa-dev \
+            mesa-common-dev \
+            pkg-config
 
-      # Cache JUCE/googletest sources across runs (keyed by CMakeLists.txt)
-      - name: Cache dependencies
+      # Cache vcpkg dependencies across runs
+      - name: Cache vcpkg dependencies
         uses: actions/cache@v4
         with:
-          path: libs
-          key: ${{ runner.os }}-libs-${{ hashFiles('CMakeLists.txt') }}
+          path: ${{ github.workspace }}/vcpkg/installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-libs-
+            vcpkg-${{ runner.os }}-
 
-      # Configure without presets: direct cmake invocation works on any runner.
-      # /EHsc is mandatory for JUCE on MSVC; /WX- suppresses warnings-as-errors.
-      - name: Configure CMake
+      # Configure CMake for macOS ARM64
+      - name: Configure CMake (macOS ARM64)
+        if: matrix.os == 'macos-15'
         run: >
-          cmake -S . -B build
+          cmake -S . -B ${{ github.workspace }}/build
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}"
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=arm64-osx
+          -DCMAKE_CXX_FLAGS="-Wno-error"
 
-      # Build the plugin first, with limited parallelism so Linux does not
-      # OOM-kill cc1plus while compiling juce_gui_basics.cpp twice at once.
-      - name: Build plugin
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
+      # Configure CMake for macOS x64
+      - name: Configure CMake (macOS x64)
+        if: matrix.os == 'macos-15-intel'
+        run: >
+          cmake -S . -B ${{ github.workspace }}/build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-osx
+          -DCMAKE_CXX_FLAGS="-Wno-error"
 
-      # Build the test executable separately (also -j2 for Linux safety).
-      - name: Build tests
-        run: cmake --build build --config ${{ matrix.build_type }} --target AudioPluginTest --parallel 2 || echo "Tests target not available on this platform"
+      # Configure CMake for Linux
+      - name: Configure CMake (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: >
+          cmake -S . -B ${{ github.workspace }}/build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DCMAKE_CXX_FLAGS="-Wno-error"
+
+      # Configure CMake for Windows (MSVC needs /EHsc for JUCE exceptions)
+      - name: Configure CMake (Windows)
+        if: matrix.os == 'windows-latest'
+        run: >
+          cmake -S . -B ${{ github.workspace }}/build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DCMAKE_CXX_FLAGS="/EHsc /WX-"
+
+      # Build the plugin with limited parallelism on Linux to avoid OOM killer
+      # (juce_gui_basics.cpp eats 3+ GB in Release, two copies kill 7 GB runners)
+      - name: Build plugin (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} -j2
+
+      # macOS and Windows have more RAM, use default parallelism
+      - name: Build plugin (macOS/Windows)
+        if: matrix.os != 'ubuntu-latest'
+        run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }}
+
+      # Build tests separately (also -j2 on Linux for safety)
+      - name: Build tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target AudioPluginTest -j2 || echo "Tests target not available"
+
+      - name: Build tests (macOS/Windows)
+        if: matrix.os != 'ubuntu-latest'
+        run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target AudioPluginTest || echo "Tests target not available"
 
       # Fix JUCE trailing commas in moduleinfo.json (Windows generator quirk)
-      - name: Fix JUCE trailing commas in moduleinfo.json
+      - name: Fix JUCE trailing commas
         shell: bash
         run: |
           python3 -c "
           import os, re
-          for root, dirs, files in os.walk('build'):
+          for root, dirs, files in os.walk('${{ github.workspace }}/build'):
               for file in files:
                   if file == 'moduleinfo.json':
                       path = os.path.join(root, file)
@@ -100,38 +156,38 @@ jobs:
                           f.truncate()
           "
 
-      # Run ctest; --output-on-failure prints the failing case's stdout.
-      # || true prevents a flaky test from failing the whole job.
+      # Run tests; || true prevents a flaky test from failing the whole job
       - name: Run tests
-        working-directory: build
+        working-directory: ${{ github.workspace }}/build
         run: ctest -C ${{ matrix.build_type }} --output-on-failure || true
 
-      # Upload VST3 (all platforms)
+      # VST3 bundle: directory-agnostic glob, the artefacts dir name
+      # follows the CMake target name (AudioPlugin_artefacts), not the product.
       - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Toposhaper-${{ matrix.name }}-VST3
+          name: Toposhaper-${{ matrix.os == 'macos-15' && 'macOS-arm64' || matrix.os == 'macos-15-intel' && 'macOS-x64' || matrix.os == 'windows-latest' && 'windows' || 'linux_x86_64' }}-VST3
           path: |
-            build/**/Toposhaper_artefacts/${{ matrix.build_type }}/VST3/*.vst3/**
-            build/**/Toposhaper.vst3/**
-          if-no-files-found: warn
+            build/**/VST3/*.vst3/**
+          if-no-files-found: error
 
-      # Upload Standalone (all platforms)
+      # Standalone: .exe on Windows, .app on macOS, extensionless on Linux.
       - name: Upload Standalone artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Toposhaper-${{ matrix.name }}-Standalone
+          name: Toposhaper-${{ matrix.os == 'macos-15' && 'macOS-arm64' || matrix.os == 'macos-15-intel' && 'macOS-x64' || matrix.os == 'windows-latest' && 'windows' || 'linux_x86_64' }}-Standalone
           path: |
-            build/**/Toposhaper_artefacts/${{ matrix.build_type }}/Standalone/*.exe
-            build/**/Toposhaper_artefacts/${{ matrix.build_type }}/Standalone/*.app/**
-            build/**/Toposhaper_artefacts/${{ matrix.build_type }}/Standalone/Toposhaper
-          if-no-files-found: warn
+            build/**/Standalone/*.exe
+            build/**/Standalone/*.app/**
+            build/**/Standalone/Toposhaper
+          if-no-files-found: error
 
-      # Upload AU (macOS only - Logic / GarageBand)
-      - name: Upload AU artifact (macOS only)
-        if: runner.os == 'macOS'
+      # AU component, macOS only (Logic / GarageBand).
+      - name: Upload AU artifact
+        if: matrix.os == 'macos-15' || matrix.os == 'macos-15-intel'
         uses: actions/upload-artifact@v4
         with:
-          name: Toposhaper-${{ matrix.name }}-AU
-          path: build/**/Toposhaper_artefacts/${{ matrix.build_type }}/AU/*.component/**
-          if-no-files-found: warn
+          name: Toposhaper-${{ matrix.os == 'macos-15' && 'macOS-arm64' || 'macOS-x64' }}-AU
+          path: |
+            build/**/AU/*.component/**
+          if-no-files-found: error
