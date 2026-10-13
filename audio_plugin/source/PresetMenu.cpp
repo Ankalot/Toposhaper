@@ -167,6 +167,8 @@ void PresetMenu::apply(const juce::String& xml,
   if (ok) {
     proc_.setPresetIdentity(name, source);
     proc_.setPresetDirty(false);
+  } else if (onSay) {
+    onSay(name + " is not a Toposhaper preset - nothing was loaded.");
   }
   applying_ = false;
   sync();

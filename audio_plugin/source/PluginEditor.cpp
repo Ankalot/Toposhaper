@@ -468,6 +468,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
     processorRef.parameters().addParameterListener(id, this);
   addAndMakeVisible(presetMenu);
   presetMenu.setNameFont(customLF.oswaldPt(16.0f));
+  presetMenu.onSay = [this](const juce::String& t) { say(t, 3000); };
 
   driveAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                 "drive", driveFlask);

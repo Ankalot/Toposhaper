@@ -755,7 +755,9 @@ juce::String PluginProcessor::copyStateAsXml() {
 }
 
 bool PluginProcessor::applyStateTree(juce::ValueTree tree) {
-  if (!tree.isValid())
+  // Foreign or garbage XML: touch nothing (warp included), report failure
+  // so callers can voice it. Parseable != ours.
+  if (!tree.isValid() || !tree.hasType(apvts.state.getType()))
     return false;
   auto warp = tree.getChildWithName(WarpCurve::kStateTag);
   if (warp.isValid()) {
@@ -775,20 +777,18 @@ bool PluginProcessor::applyStateTree(juce::ValueTree tree) {
     tree.removeChild(ui, nullptr);
     ++uiState_.seq;
   }
-  if (tree.isValid() && tree.hasType(apvts.state.getType())) {
-    auto meta = tree.getChildWithName("PRESET");
-    if (meta.isValid()) {
-      presetName_ = meta.getProperty("name", "Init").toString();
-      presetSource_ = meta.getProperty("source", "init").toString();
-      presetDirty_ = static_cast<bool>(meta.getProperty("dirty", false));
-      tree.removeChild(meta, nullptr);
-    } else {
-      presetName_ = "Init";  // old sessions / preset blobs: no identity
-      presetSource_ = "init";
-      presetDirty_ = false;
-    }
-    apvts.replaceState(tree);
+  auto meta = tree.getChildWithName("PRESET");
+  if (meta.isValid()) {
+    presetName_ = meta.getProperty("name", "Init").toString();
+    presetSource_ = meta.getProperty("source", "init").toString();
+    presetDirty_ = static_cast<bool>(meta.getProperty("dirty", false));
+    tree.removeChild(meta, nullptr);
+  } else {
+    presetName_ = "Init";  // old sessions / preset blobs: no identity
+    presetSource_ = "init";
+    presetDirty_ = false;
   }
+  apvts.replaceState(tree);
   return true;
 }
 

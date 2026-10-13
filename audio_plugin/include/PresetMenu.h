@@ -12,6 +12,9 @@ public:
 
   void markModified();  // called from PluginEditor when a parameter changes
   void setNameFont(const juce::Font& f);
+  // Cat voice hook: the editor wires this to PluginEditor::say(). PresetMenu
+  // never touches the bubble itself - the room speaks through the editor.
+  std::function<void(const juce::String&)> onSay;
 
   void paint(juce::Graphics& g) override;
   void resized() override;
