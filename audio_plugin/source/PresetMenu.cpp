@@ -257,14 +257,64 @@ void PresetMenu::deleteCurrent() {
       true);
 }
 
-void PresetMenu::finishDelete(const juce::String& name) {
-  const auto file =
-      PluginProcessor::userPresetDirectory().getChildFile(name + ".tspreset");
-  if (!file.deleteFile())
+void PresetMenu::renameCurrent() {
+  if (proc_.presetSource() != "USER")
     return;
-  proc_.setPresetDirty(true);  // sound stays in memory, identity unsaved
-  sync();
+  const auto oldName = proc_.presetName();
+  const auto oldFile = PluginProcessor::userPresetDirectory().getChildFile(
+      oldName + ".tspreset");
+  if (!oldFile.existsAsFile())
+    return;
+  auto* box = new juce::AlertWindow("Rename preset", {}, {}, nullptr);
+  box->addTextEditor("name", oldName, "New name:");
+  if (auto* ed = box->getTextEditor("name"))
+    ed->setSelectAllWhenFocused(true);
+  box->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+  box->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+  box->enterModalState(
+      true,
+      juce::ModalCallbackFunction::create(
+          [this, oldName, oldFile,
+           safe = juce::Component::SafePointer<juce::AlertWindow>(box)](
+              int result) {
+            auto* w = safe.getComponent();
+            if (w == nullptr || result != 1)
+              return;
+            juce::String newName = w->getTextEditor("name")
+                                       ->getText()
+                                       .trim()
+                                       .removeCharacters("/\\:*?\"<>|")
+                                       .substring(0, maxNameLength_);
+            if (newName.isEmpty() || newName == oldName)
+              return;  // empty or unchanged: nothing to do
+            const auto newFile =
+                PluginProcessor::userPresetDirectory().getChildFile(
+                    newName + ".tspreset");
+            // A case-only rename hits the same file on case-insensitive
+            // filesystems: that is legal. Any other existing file means
+            // the name is occupied - rename refuses, never overwrites.
+            const bool sameFile = oldFile.getFullPathName().compareIgnoreCase(
+                                      newFile.getFullPathName()) == 0;
+            if (!sameFile && newFile.existsAsFile()) {
+              juce::AlertWindow::showMessageBoxAsync(
+                  juce::AlertWindow::WarningIcon, "Rename preset",
+                  "Preset \"" + newName + "\" already exists.");
+              return;
+            }
+            if (!oldFile.moveFileTo(newFile)) {
+              juce::AlertWindow::showMessageBoxAsync(
+                  juce::AlertWindow::WarningIcon, "Rename preset",
+                  "Could not rename the preset file.");
+              return;
+            }
+            // Pure file move: the sound is untouched, so the dirty flag
+            // stays exactly as it was; only the identity follows the file.
+            proc_.setPresetIdentity(newName, "USER");
+            sync();
+          }),
+      true);
 }
+
 void PresetMenu::revealFolder() {
   PluginProcessor::userPresetDirectory().startAsProcess();
 }
@@ -275,15 +325,16 @@ void PresetMenu::showMenu() {
   // File operations group
   m.addItem("Save as...",
             [this] { juce::MessageManager::callAsync([this] { saveAs(); }); });
-
   const auto userFile = PluginProcessor::userPresetDirectory().getChildFile(
       proc_.presetName() + ".tspreset");
-  const bool canDelete =
+  const bool userFileLive =
       proc_.presetSource() == "USER" && userFile.existsAsFile();
-  m.addItem("Delete current preset...", canDelete, false, [this] {
+  m.addItem("Rename current preset...", userFileLive, false, [this] {
+    juce::MessageManager::callAsync([this] { renameCurrent(); });
+  });
+  m.addItem("Delete current preset...", userFileLive, false, [this] {
     juce::MessageManager::callAsync([this] { deleteCurrent(); });
   });
-
   m.addItem("Show presets folder", [this] { revealFolder(); });
 
   m.addSeparator();
