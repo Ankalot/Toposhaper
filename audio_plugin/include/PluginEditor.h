@@ -50,15 +50,18 @@ private:
   juce::Font font_{juce::FontOptions{}};
 };
 
-// Three-way radio switch bank over the printed OVER SAMPLING panel: the
-// art prints slots, labels and stripes; lamps and handle sprites live
-// here. Exactly one switch is engaged and the engaged one cannot be
-// turned off (something must stay engaged).
-class OsPanel : public juce::Component, private juce::Timer {
+// Three-way mutually-exclusive toggle bank over the printed OVER SAMPLING
+// panel: the art prints slots, labels and stripes; lamps and handle sprites
+// live here. Engaging one switch releases the others; all three down = OFF
+// (native rate), so the engaged switch CAN be turned off.
+class OsPanel : public juce::Component,
+                private juce::Timer,
+                public juce::TooltipClient {  // panel-level voice for OFF
 public:
   explicit OsPanel(PluginProcessor& p);
   void paint(juce::Graphics& g) override;
   void resized() override;
+  juce::String getTooltip() override;
 
 private:
   void engage(int idx);
@@ -67,7 +70,7 @@ private:
   PluginProcessor& proc_;
   juce::TextButton btns_[3];
   juce::Image handleImg_;
-  int active_ = 0;
+  int active_ = -1;
 };
 
 // Vertical level knob: liquid clipped to the printed glass

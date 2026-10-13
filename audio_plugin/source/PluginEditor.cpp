@@ -90,12 +90,12 @@ OsPanel::OsPanel(PluginProcessor& p) : proc_(p) {
       juce::ImageCache::getFromMemory(BinaryData::oversampling_handle_png,
                                       BinaryData::oversampling_handle_pngSize);
   static const char* kTips[3] = {
-      "Oversampling OFF: native rate, cheapest CPU; aliasing stays "
-      "possible on steep or folded curves.",
       "Oversampling x2: warp runs at double rate with zero-phase "
-      "decimation.",
-      "Oversampling x4: cleanest highs on folds, four times the warp "
-      "CPU.",
+      "decimation; transparent for gentle curves, cheapest engaged rung.",
+      "Oversampling x4: measured transparent for every continuous curve; "
+      "the quality knee.",
+      "Oversampling x8: for step-like (vertical-wall) curves and hard folds "
+      "on bright material.",
   };
   for (int i = 0; i < 3; ++i) {
     btns_[i].setTooltip(kTips[i]);
@@ -109,20 +109,29 @@ OsPanel::OsPanel(PluginProcessor& p) : proc_(p) {
 }
 
 void OsPanel::engage(int idx) {
-  if (idx == active_)
-    return;  // radio bank: the engaged switch cannot be turned off
+  // Mutual-exclusive toggles: clicking the engaged switch drops to OFF
+  const int choice = (idx == active_) ? 0 : idx + 1;  // 0 = OFF
   auto* p = proc_.parameters().getParameter("os_factor");
-  p->setValueNotifyingHost(static_cast<float>(idx) / 2.0f);  // 0 / 0.5 / 1
+  p->setValueNotifyingHost(static_cast<float>(choice) / 3.0f);  // 4 ids
   sync();
 }
 
 void OsPanel::sync() {
-  const int f = proc_.osFactor();  // 1, 2 or 4
-  const int idx = (f == 4) ? 2 : (f == 2 ? 1 : 0);
+  const int f = proc_.osFactor();  // 1, 2, 4 or 8
+  const int idx = (f == 8) ? 2 : (f == 4) ? 1 : (f == 2) ? 0 : -1;
   if (idx != active_) {
     active_ = idx;
     repaint();
   }
+}
+
+juce::String OsPanel::getTooltip() {
+  return active_ < 0
+             ? juce::String(
+                   "Oversampling OFF: all switches down, native rate; "
+                   "aliasing stays possible on steep or folded curves.")
+             : juce::String(
+                   "Click the engaged switch down for OFF (native rate).");
 }
 
 void OsPanel::timerCallback() {

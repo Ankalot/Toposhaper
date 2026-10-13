@@ -45,7 +45,7 @@ public:
   void warpEdited() { warpSlot_.publish(warpCurve_); }
 
   juce::AudioProcessorValueTreeState& parameters() { return apvts; }
-  int osFactor() const;    // 1 / 2 / 4, from the os_factor choice index
+  int osFactor() const;    // 1 / 2 / 4 / 8,  from the os_factor choice index
   int smoothMode() const;  // 0 = SG, 1 = PAVA (index choice smooth_mode)
   juce::String copyStateAsXml();
   bool applyStateXml(const juce::String& xml);
@@ -163,7 +163,8 @@ private:
       false;         // last analysis window was degenerate (silence/DC)
   UiState uiState_;  // view recall mirror: editor writes, state serializes
   juce::String presetName_{"Init"}, presetSource_{"init"};
-  bool presetDirty_ = false;  // '*' flag: state differs from applied/saved preset
+  bool presetDirty_ =
+      false;  // '*' flag: state differs from applied/saved preset
 
   void findExtrema(const float* window);
   int findRoot(int i);

@@ -35,7 +35,7 @@ PluginProcessor::createParameterLayout() {
       juce::StringArray{"SG", "PAVA"}, 0));
   layout.add(std::make_unique<juce::AudioParameterChoice>(
       juce::ParameterID{"os_factor", 1}, "Oversampling",
-      juce::StringArray{"OFF", "X2", "X4"}, 0,
+      juce::StringArray{"OFF", "X2", "X4", "X8"}, 1,
       // Quality switch: travels in state/presets and shows in generic UI,
       // but stays out of automation lanes and MIDI learn.
       juce::AudioParameterChoiceAttributes().withAutomatable(false)));
@@ -131,8 +131,8 @@ void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   parent_.resize(kWindowSize);
   active_.resize(kWindowSize);
   osS_.reserve(static_cast<size_t>(kWindowSize) + 2);
-  osA_.reserve(static_cast<size_t>(4 * kWindowSize) + 1);
-  osB_.reserve(static_cast<size_t>(2 * kWindowSize) + 1);
+  osA_.reserve(static_cast<size_t>(8 * kWindowSize) + 1);
+  osB_.reserve(static_cast<size_t>(4 * kWindowSize) + 1);
   pava_.reserve(static_cast<size_t>(kWindowSize));
   bakeWarpLut(warpSnap_, warpLut_.data(), kWarpLutSize);
   setLatencySamples(kWindowSize);
@@ -430,9 +430,9 @@ float PluginProcessor::warpEval(float t) const {
 }
 
 int PluginProcessor::osFactor() const {
-  static constexpr int kMap[3] = {1, 2, 4};
+  static constexpr int kMap[4] = {1, 2, 4, 8};
   const int idx = juce::jlimit(
-      0, 2, static_cast<int>(osPtr->load(std::memory_order_relaxed)));
+      0, 3, static_cast<int>(osPtr->load(std::memory_order_relaxed)));
   return kMap[idx];
 }
 
