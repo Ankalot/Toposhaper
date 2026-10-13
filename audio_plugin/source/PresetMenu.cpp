@@ -219,18 +219,86 @@ void PresetMenu::saveAs() {
       true);
 }
 
+void PresetMenu::deleteCurrent() {
+  if (proc_.presetSource() != "USER")
+    return;
+  const auto name = proc_.presetName();
+  const auto file =
+      PluginProcessor::userPresetDirectory().getChildFile(name + ".tspreset");
+  if (!file.existsAsFile())
+    return;
+
+  auto* box =
+      new juce::AlertWindow("Delete preset",
+                            "Delete user preset \"" + name +
+                                "\"?\nThe .tspreset file will be removed.",
+                            juce::AlertWindow::QuestionIcon, nullptr);
+  box->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+  box->addButton("Delete", 1, juce::KeyPress(juce::KeyPress::returnKey));
+
+  box->enterModalState(
+      true,
+      juce::ModalCallbackFunction::create(
+          [this, name,
+           safe = juce::Component::SafePointer<juce::AlertWindow>(box)](
+              int result) {
+            auto* w = safe.getComponent();
+            if (w == nullptr || result != 1)
+              return;
+
+            const auto file =
+                PluginProcessor::userPresetDirectory().getChildFile(
+                    name + ".tspreset");
+            if (file.deleteFile()) {
+              proc_.setPresetDirty(true);
+              sync();
+            }
+          }),
+      true);
+}
+
+void PresetMenu::finishDelete(const juce::String& name) {
+  const auto file =
+      PluginProcessor::userPresetDirectory().getChildFile(name + ".tspreset");
+  if (!file.deleteFile())
+    return;
+  proc_.setPresetDirty(true);  // sound stays in memory, identity unsaved
+  sync();
+}
+void PresetMenu::revealFolder() {
+  PluginProcessor::userPresetDirectory().startAsProcess();
+}
+
 void PresetMenu::showMenu() {
   juce::PopupMenu m;
+
+  // File operations group
+  m.addItem("Save as...",
+            [this] { juce::MessageManager::callAsync([this] { saveAs(); }); });
+
+  const auto userFile = PluginProcessor::userPresetDirectory().getChildFile(
+      proc_.presetName() + ".tspreset");
+  const bool canDelete =
+      proc_.presetSource() == "USER" && userFile.existsAsFile();
+  m.addItem("Delete current preset...", canDelete, false, [this] {
+    juce::MessageManager::callAsync([this] { deleteCurrent(); });
+  });
+
+  m.addItem("Show presets folder", [this] { revealFolder(); });
+
+  m.addSeparator();
+
+  // Clipboard group
   m.addItem("Copy to clipboard", [this] {
     juce::SystemClipboard::copyTextToClipboard(proc_.copyStateAsXml());
   });
   m.addItem("Paste from clipboard", [this] {
     apply(juce::SystemClipboard::getTextFromClipboard(), "Clipboard", "clip");
   });
-  m.addItem("Save as...",
-            [this] { juce::MessageManager::callAsync([this] { saveAs(); }); });
+
   m.addSeparator();
 
+  // Preset selection group
   const auto list = collect();
   juce::PopupMenu user;
   std::vector<std::pair<juce::String, juce::PopupMenu>> cats;

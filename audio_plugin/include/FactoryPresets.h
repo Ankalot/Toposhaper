@@ -12,7 +12,7 @@ inline const FactoryPreset kFactoryPresets[1] = {
   <PARAM id="drive" value="1.0"/>
   <PARAM id="smooth_mix" value="0.0"/>
   <PARAM id="threshold" value="0.23"/>
-  <PARAM id="os_factor" value="2.0"/>
+  <PARAM id="os_factor" value="3.0"/>
   <PARAM id="smooth_mode" value="0.0"/>
   <WARP lock="0">
     <P x="0.0" y="0.0"/>

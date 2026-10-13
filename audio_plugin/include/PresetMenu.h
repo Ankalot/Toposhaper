@@ -22,6 +22,9 @@ private:
   void showMenu();
   void step(int dir);
   void saveAs();
+  void deleteCurrent();  // confirm + remove the applied user preset file
+  void finishDelete(const juce::String& name);
+  void revealFolder();  // open the user preset dir in the OS file browser
   void apply(const juce::String& xml,
              const juce::String& name,
              const juce::String& source);
