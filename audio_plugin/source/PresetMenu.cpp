@@ -186,6 +186,41 @@ void PresetMenu::step(int dir) {
   apply(list[idx].xml, list[idx].name, list[idx].source);
 }
 
+void PresetMenu::writePreset(const juce::String& name) {
+  const auto file =
+      PluginProcessor::userPresetDirectory().getChildFile(name + ".tspreset");
+  if (!file.replaceWithText(proc_.copyStateAsXml())) {
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::WarningIcon, "Save preset",
+        "Could not write \"" + name + ".tspreset\".");
+    return;  // identity stays untouched: nothing was actually saved
+  }
+  proc_.setPresetIdentity(name, "USER");
+  proc_.setPresetDirty(false);
+  sync();
+}
+
+void PresetMenu::confirmOverwrite(const juce::String& name) {
+  auto* box = new juce::AlertWindow("Save preset",
+                                    "Preset \"" + name +
+                                        "\" already exists.\n"
+                                        "Replace it with the current state?",
+                                    juce::AlertWindow::QuestionIcon, nullptr);
+  box->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+  box->addButton("Replace", 1, juce::KeyPress(juce::KeyPress::returnKey));
+  box->enterModalState(
+      true,
+      juce::ModalCallbackFunction::create(
+          [this, name,
+           safe = juce::Component::SafePointer<juce::AlertWindow>(box)](
+              int result) {
+            if (safe.getComponent() == nullptr || result != 1)
+              return;  // cancelled: the existing file stays untouched
+            writePreset(name);
+          }),
+      true);
+}
+
 void PresetMenu::saveAs() {
   auto* box = new juce::AlertWindow("Save preset", {}, {}, nullptr);
   box->addTextEditor("name", proc_.presetName(), "Preset name:");
@@ -211,10 +246,10 @@ void PresetMenu::saveAs() {
             const auto file =
                 PluginProcessor::userPresetDirectory().getChildFile(
                     name + ".tspreset");
-            file.replaceWithText(proc_.copyStateAsXml());
-            proc_.setPresetIdentity(name, "USER");
-            proc_.setPresetDirty(false);
-            sync();
+            if (file.existsAsFile())
+              confirmOverwrite(name);  // second modal, sequential: the first
+            else                       // one is already dismissed by now
+              writePreset(name);
           }),
       true);
 }

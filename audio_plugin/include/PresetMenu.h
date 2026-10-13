@@ -22,6 +22,8 @@ private:
   void showMenu();
   void step(int dir);
   void saveAs();
+  void confirmOverwrite(const juce::String& name);  // second modal: Replace?
+  void writePreset(const juce::String& name);       // the actual file write
   void deleteCurrent();  // confirm + remove the applied user preset file
   void renameCurrent();  // confirm + move the applied user preset file
   void revealFolder();   // open the user preset dir in the OS file browser
