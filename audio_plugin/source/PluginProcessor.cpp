@@ -519,7 +519,7 @@ void PluginProcessor::deformSection(const float* window,
     for (int j = 0; j <= L; ++j) {
       float x = window[a + j];
       if (pava) {
-        if (j >= 1 && j < L)  // якоря j=0 и j=L остаются сырыми
+        if (j >= 1 && j < L)  // anchors j=0 and j=L are raw
           x += smoothMix * (pava_[static_cast<size_t>(j - 1)] - x);
       } else if (smooth) {
         float acc = 0.0f;

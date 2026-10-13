@@ -5,7 +5,25 @@ struct FactoryPreset {
   const char* name;
   const char* xml;
 };
-inline const FactoryPreset kFactoryPresets[1] = {
+// Index 0 is the fresh-instance identity: keep Init FIRST and mirror
+// createParameterLayout() defaults byte-for-byte, so a new instance ticks
+// as "Init" and applying it from the menu is a true no-op.
+inline const FactoryPreset kFactoryPresets[] = {
+    {"Basic", "Init",
+     R"TS(<?xml version="1.0" encoding="UTF-8"?>
+<Toposhaper>
+  <PARAM id="drive" value="1.0"/>
+  <PARAM id="smooth_mix" value="0.0"/>
+  <PARAM id="threshold" value="0.1"/>
+  <PARAM id="os_factor" value="1.0"/>
+  <PARAM id="smooth_mode" value="0.0"/>
+  <WARP lock="1">
+    <P x="0.0" y="0.0"/>
+    <H x="0.5" y="0.0"/>
+    <P x="1.0" y="1.0"/>
+  </WARP>
+</Toposhaper>
+)TS"},
     {"Destruction", "DOLBIT NORMALNO",
      R"TS(<?xml version="1.0" encoding="UTF-8"?>
 <Toposhaper>
