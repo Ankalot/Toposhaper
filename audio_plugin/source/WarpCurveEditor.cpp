@@ -52,7 +52,11 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
                kGridW);
   }
   // Fine snap grid while Alt is held: fainter chalk, same 0.05 step
-  if (juce::ModifierKeys::getCurrentModifiers().isAltDown()) {
+  const bool altGrid =
+      juce::ModifierKeys::getCurrentModifiersRealtime().isAltDown() &&
+      (grab_ != Kind::none ||
+       curveRect().contains(getMouseXYRelative().toFloat()));
+  if (altGrid) {
     g.setColour(ui::chalk.withAlpha(0.18f));
     for (int i = 1; i < 20; ++i) {
       if (i % 5 == 0)
@@ -245,5 +249,14 @@ void WarpCurveEditor::mouseExit(const juce::MouseEvent&) {
   hover_ = {};
   setMouseCursor(juce::MouseCursor::NormalCursor);
   repaint();
+}
+
+juce::String WarpCurveEditor::getTooltip() {
+  // The board speaks only where the curve lives
+  if (grab_ == Kind::none &&
+      !curveRect().contains(getMouseXYRelative().toFloat()))
+    return {};
+  return "Drag points and handles; double-click adds or removes points.\n"
+         "Alt: snap to the fine grid. Shift: vertical-only bend.";
 }
 }  // namespace audio_plugin

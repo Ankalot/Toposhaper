@@ -8,7 +8,9 @@ namespace audio_plugin {
 // Q = B(0.5)); dragging it in 2D bends the segment asymmetrically, Shift
 // locks vertical. Double-click adds/removes points. All clamps live in
 // WarpCurve, so the editor cannot break monotonicity.
-class WarpCurveEditor : public juce::Component, private juce::Timer {
+class WarpCurveEditor : public juce::Component,
+                        private juce::Timer,
+                        public juce::TooltipClient {
 public:
   // onChange may be passed here or later via setOnChange()
   WarpCurveEditor(WarpCurve& curve, std::function<void()> onChange = {});
@@ -22,6 +24,7 @@ public:
   void mouseMove(const juce::MouseEvent&) override;
   void mouseDoubleClick(const juce::MouseEvent&) override;
   void mouseExit(const juce::MouseEvent&) override;
+  juce::String getTooltip() override;  // voice only inside the unit square
 
 private:
   enum class Kind { none, point, handle };
