@@ -183,7 +183,8 @@ Flask::Flask(const Config& cfg)
 void Flask::valueChanged() {
   juce::Slider::valueChanged();  // notify SliderAttachment / listeners
   const int pct = juce::roundToInt(getValue() * 100.0);
-  setTooltip(juce::String(pct) + "%\n" + baseTooltip_);
+  setTooltip(juce::String(pct) + "%\n" + baseTooltip_ +
+             "\nHold Alt for precision mode.");
 }
 
 bool Flask::hitTest(int x, int y) {
@@ -192,10 +193,26 @@ bool Flask::hitTest(int x, int y) {
 }
 
 void Flask::mouseDown(const juce::MouseEvent& e) {
-  pour(e.y);
+  // Alt latches precision mode for the whole gesture: the surface does
+  // NOT jump to the cursor, the cursor becomes a knob turning from the
+  // pressed value. Latched at press so the mode cannot flip mid-drag.
+  fine_ = e.mods.isAltDown();
+  if (fine_) {
+    fineStart_ = juce::jlimit(0.0f, 1.0f, static_cast<float>(getValue()));
+    fineStartY_ = e.y;
+  } else {
+    pour(e.y);
+  }
 }
+
 void Flask::mouseDrag(const juce::MouseEvent& e) {
-  pour(e.y);
+  if (fine_) {
+    const float perPx = 1.0f / (travel_ * fineDiv_);
+    setValue(juce::jlimit(0.0f, 1.0f, fineStart_ + (fineStartY_ - e.y) * perPx),
+             juce::sendNotificationSync);
+  } else {
+    pour(e.y);
+  }
 }
 
 void Flask::pour(int yLocal) {
@@ -238,8 +255,8 @@ Flask::Config makeFlaskDrive() {
   cfg.levelY0 = 646.5f;
   cfg.levelY1 = 551.5f;
   cfg.tooltip =
-      "Blend between raw and warped using DEFORMATION EQUATION.\nOnly "
-      "section interiors bend - anchor peaks/valleys stay pinned.";
+      "Blend between raw and warped.\n"
+      "Only section interiors between anchors bend.";
   return cfg;
 }
 
@@ -261,8 +278,8 @@ Flask::Config makeFlaskThresh() {
   cfg.levelY0 = 610.5f;
   cfg.levelY1 = 515.5f;
   cfg.tooltip =
-      "How strong an extremum must be to anchor a section.\n"
-      "Low = keep fine detail; high = demote noise to texture.";
+      "Extremum strength needed to anchor a section.\n"
+      "Low = detail; high = texture.";
   return cfg;
 }
 
@@ -285,7 +302,7 @@ Flask::Config makeFlaskSmooth() {
   cfg.levelY1 = 535.5f;
   cfg.tooltip =
       "Strength of the selected smoothing.\n"
-      "Anchors stay raw; very short sections stay raw.";
+      "Anchors and very short sections stay raw.";
   return cfg;
 }
 }  // namespace

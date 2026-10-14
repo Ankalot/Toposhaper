@@ -107,6 +107,13 @@ private:
   float travel_ = 0.0f;          // px of liquid travel
   juce::String baseTooltip_;     // static text from Config
   void valueChanged() override;  // rebuild tooltip with current %
+
+  // Alt-precision gesture, latched at press: relative pour from the pressed
+  // value instead of jump-to-cursor, kFineDiv times finer than 1:1.
+  bool fine_ = false;
+  float fineDiv_ = 5.0f;    // Alt: four times finer than 1:1
+  float fineStart_ = 0.0f;  // value at press
+  int fineStartY_ = 0;      // local y at press
 };
 
 // Paper tag tied to the SMOOTH flask neck: two-option mode switch
