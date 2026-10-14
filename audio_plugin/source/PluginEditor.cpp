@@ -590,7 +590,7 @@ void PluginEditor::paint(juce::Graphics& g) {
 }
 
 void PluginEditor::resized() {
-  warpEditor.setBounds(462, 40, 326, 222);
+  warpEditor.setBounds(442, 25, 366, 258);
   foldSwitch.setBounds(690, 184, 76, 68);
   driveFlask.setBounds(10, 407, 110, 241);
   threshFlask.setBounds(134, 371, 110, 241);

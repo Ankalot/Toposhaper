@@ -2,12 +2,17 @@ namespace audio_plugin {
 namespace {
 // Printed unit square on the board, in component-local px.
 // Component bounds = board interior;
-constexpr float kUnitX = 20.0f;
-constexpr float kUnitY = 51.0f;
+constexpr float kUnitX = 40.0f;
+constexpr float kUnitY = 66.0f;
 constexpr float kUnitW = 160.0f;
 constexpr float kUnitH = 160.0f;
 constexpr float kCurveW = 2.6f;  // chalk stroke for the curve
 constexpr float kGridW = 1.0f;   // chalk stroke for the half grid
+
+// Invisible hit rectangle over the eraser sprite painted on the board art
+// (component-local px). PLACEHOLDER numbers: line them up with the actual
+// eraser in the art — the debug rect at the bottom of paint() shows the box.
+const auto kEraserZone = juce::Rectangle<int>(283, 230, 47, 18);
 
 // Widget-private geometry (not shared design tokens)
 constexpr float kPointR = 5.0f;
@@ -24,7 +29,38 @@ float snapped(float v) {
 WarpCurveEditor::WarpCurveEditor(WarpCurve& curve,
                                  std::function<void()> onChange)
     : curve_(curve), onChange_(std::move(onChange)) {
+  // Eraser: a flat invisible button on the painted sprite.
+  eraserBtn_.setAlpha(0.0f);
+  eraserBtn_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+  eraserBtn_.setTooltip("Eraser: wipe the curve back to y = x.");
+  eraserBtn_.onClick = [this] { resetToIdentity(); };
+  addAndMakeVisible(eraserBtn_);
+  // The board never resizes (PluginEditor::resized pins it), so the zone is
+  // set once here instead of in a resized() override.
+  eraserBtn_.setBounds(kEraserZone);
+
   startTimerHz(30);  // reflect edits made outside the editor (state load)
+}
+
+bool WarpCurveEditor::isIdentity() const {
+  if (curve_.numPoints() != 2)
+    return false;
+  const auto a = curve_.point(0);
+  const auto b = curve_.point(1);
+  const auto h = curve_.handleNode(0);
+  return a.x == 0.0f && a.y == 0.0f && b.x == 1.0f && b.y == 1.0f &&
+         h.x == 0.5f && h.y == 0.5f;
+}
+
+void WarpCurveEditor::resetToIdentity() {
+  if (isIdentity())
+    return;  // nothing to wipe: don't touch state, don't raise the star
+  while (curve_.numPoints() > 2)
+    curve_.removePoint(curve_.numPoints() - 2);
+  curve_.movePoint(0, 0.0f, 0.0f);
+  curve_.movePoint(1, 1.0f, 1.0f);
+  curve_.moveHandle(0, 0.5f, 0.5f);
+  notify();  // publishes the LUT, marks the preset dirty, repaints
 }
 
 juce::Rectangle<float> WarpCurveEditor::curveRect() const {
@@ -257,6 +293,7 @@ juce::String WarpCurveEditor::getTooltip() {
       !curveRect().contains(getMouseXYRelative().toFloat()))
     return {};
   return "Drag points and handles; double-click adds or removes points.\n"
-         "Alt: snap to the fine grid. Shift: vertical-only bend.";
+         "Alt: snap to the fine grid. Shift: vertical-only bend.\n"
+         "Eraser: wipe the curve to y = x.";
 }
 }  // namespace audio_plugin

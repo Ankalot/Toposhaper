@@ -50,6 +50,9 @@ private:
   juce::Point<float> grabOffset_;
   float lockedHandleX_ = 0.5f;  // Shift-drag vertical lock
   Hit hover_;
+  juce::TextButton eraserBtn_;  // invisible hit zone over the painted eraser
+  void resetToIdentity();       // wipe the drawing back to the y=x curve
+  bool isIdentity() const;      // true when the curve already equals y=x
   juce::Font readoutFont_{
       juce::FontOptions{}};  // handwritten chalk (Caveat) for the x/y readout
 
