@@ -130,6 +130,7 @@ juce_add_binary_data(PluginAssets
     SOURCES
         audio_plugin/assets/background.png
         audio_plugin/assets/oscilloscope.png
+        audio_plugin/assets/freeze.png
         audio_plugin/assets/oversampling_handle.png
         audio_plugin/assets/drive_flask.png
         audio_plugin/assets/thresh_flask.png

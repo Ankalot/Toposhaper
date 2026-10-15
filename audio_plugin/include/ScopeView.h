@@ -78,7 +78,65 @@ private:
   int prim_ = 0;         // effective primary channel
   bool stereo_ = false;  // overlay/split actively drawing two channels
   bool hasR_ = false;    // R history available and aligned
-  uint32_t uiSeq_ = 0;  // last seen UiState::seq
+  uint32_t uiSeq_ = 0;   // last seen UiState::seq
+
+  // Freeze button: orange circle when active, grey lampOff otherwise,
+  // with the freeze.png icon painted on top. Click toggles the hold state;
+  // the parent wires the callback to reset trails and skip refresh().
+  class FreezeBtn : public juce::Component, public juce::TooltipClient {
+  public:
+    FreezeBtn() {
+      freezeImg_ = juce::ImageCache::getFromMemory(BinaryData::freeze_png,
+                                                   BinaryData::freeze_pngSize);
+      setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    bool isFrozen() const { return frozen_; }
+
+    void setFrozen(bool on) {
+      if (on != frozen_) {
+        frozen_ = on;
+        repaint();
+      }
+    }
+
+    std::function<void()> onToggle;
+
+    void mouseUp(const juce::MouseEvent& e) override {
+      if (getLocalBounds().contains(e.getPosition())) {
+        frozen_ = !frozen_;
+        repaint();
+        if (onToggle)
+          onToggle();
+      }
+    }
+
+    void paint(juce::Graphics& g) override {
+      const auto r = getLocalBounds().toFloat().reduced(1.0f);
+      g.setColour(frozen_ ? ui::accentR : ui::lampOff);
+      g.fillRect(r);
+      if (!freezeImg_.isNull()) {
+        g.drawImage(freezeImg_, getLocalBounds().toFloat());
+      }
+    }
+
+    juce::String getTooltip() override {
+      return frozen_
+                 ? "FREEZE is ON: click to resume scope updates."
+                 : "FREEZE: click to hold the current frame for inspection.";
+    }
+
+  private:
+    bool frozen_ = false;
+    juce::Image freezeImg_;
+  };
+  FreezeBtn freezeBtn_;
+  // One-shot deep history read at the freeze moment: the frozen record
+  // becomes as deep as the scope ring allows instead of 2*viewLen+4096, so
+  // zoom-out headroom no longer depends on the H-zoom at click time.
+  void freezeCapture();  
+  bool freeze_ = false;
+  int freezeRight_ = 0;  // coordinate of the right edge of the frozen frame
 
   // Passive stereo-width indicator
   class SmChip : public juce::Component, public juce::TooltipClient {

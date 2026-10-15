@@ -17,6 +17,13 @@ int niceDiv(int viewLen) {
 // Detent centres under the printed L / R / L&R / L|R labels,
 // as fractions of the groove width. Re-measure from the case art.
 constexpr float kDetentX[4] = {0.128f, 0.285f, 0.53f, 0.84f};
+
+constexpr float kPreTriggerFrac = 0.15f;
+
+// Ask for more than the ring can hold: readScopeSpan clamps the request to
+// its capacity, so the frozen record depth becomes a constant (ring
+// capacity) instead of a function of the H-zoom at the freeze moment.
+constexpr size_t kFreezeDepth = size_t(1) << 20;
 }  // namespace
 
 ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
@@ -26,15 +33,32 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
       "Waveform tracking: ON = triggered (stable picture), OFF = scroll "
       "(true-time).");
   trackBtn_.onClick = [this] {
+    if (freeze_)
+      return;
     trailN_[0] = trailN_[1] = 0;
     repaint();
   };
 
+  freezeBtn_.onToggle = [this] {
+    freeze_ = freezeBtn_.isFrozen();
+    if (freeze_) {
+      freezeCapture();
+      freezeRight_ = viewStart_ + viewLen_;
+      trailN_[0] = std::min(trailN_[0], 1);
+      trailN_[1] = std::min(trailN_[1], 1);
+    } else {
+      trailN_[0] = trailN_[1] = 0;
+    }
+    repaint();
+  };
+  addAndMakeVisible(freezeBtn_);
+
   chanBtn_.onModeChange_ = [this](int mode) {
     if (mode == chanMode_)
       return;
-    chanMode_ = mode;  // drag: jump straight to the detent under cursor
-    trailN_[0] = trailN_[1] = 0;
+    chanMode_ = mode;
+    if (!freeze_)
+      trailN_[0] = trailN_[1] = 0;
     repaint();
   };
   chanBtn_.setTooltip(
@@ -68,7 +92,8 @@ ScopeView::ScopeView(PluginProcessor& p) : proc_(p) {
       "controlled using MWheel on the display.");
   hZoom_.setScrollWheelEnabled(false);
   hZoom_.onValueChange = [this] {
-    trailN_[0] = trailN_[1] = 0;
+    if (!freeze_)
+      trailN_[0] = trailN_[1] = 0;
     repaint();
   };
 
@@ -189,7 +214,8 @@ double ScopeView::hFromLen(int len) const {
 
 void ScopeView::resized() {
   trackBtn_.setBounds(juce::Rectangle<int>(565, 111, 27, 27));  // LOCK
-  smChip_.setBounds(juce::Rectangle<int>(589, 152, 20, 20));    // CHS Indicator
+  freezeBtn_.setBounds(juce::Rectangle<int>(590, 60, 21, 21));  // FREEZE
+  smChip_.setBounds(juce::Rectangle<int>(588, 152, 21, 21));    // CHS Indicator
   chanBtn_.setBounds(juce::Rectangle<int>(536, 203, 83, 18));   // CHS Groove
   vZoom_.setBounds(juce::Rectangle<int>(567, 254, 27, 27));     // V-ZOOM
   hZoom_.setBounds(juce::Rectangle<int>(567, 303, 27, 27));     // H-ZOOM
@@ -259,12 +285,89 @@ void ScopeView::applyUiState() {
   vZoom_.setValue(s.vExp, juce::dontSendNotification);
   chanMode_ = s.chanMode;
   trackBtn_.setToggleState(s.track, juce::dontSendNotification);
+  freezeBtn_.setFrozen(false);  // session restore always unfreezes
+  freeze_ = false;
   trailN_[0] = trailN_[1] = 0;
+}
+
+void ScopeView::freezeCapture() {
+  const size_t keepN[2] = {spanN_[0], spanN_[1]};
+  size_t got[2] = {0, 0};
+  uint64_t st[2] = {0, 0};
+
+  // Deep read of the output history. A failed read (ring younger than the
+  // request, e.g. right after start / sample-rate change) leaves that
+  // channel's shallow capture untouched.
+  for (int ch = 0; ch < 2; ++ch) {
+    span_[ch].resize(kFreezeDepth);
+    got[ch] = proc_.readScopeSpan(span_[ch].data(), kFreezeDepth, st[ch], ch);
+    if (got[ch] > 0) {
+      spanN_[ch] = got[ch];
+      spanStart_[ch] = st[ch];
+      span_[ch].resize(got[ch]);
+    } else {
+      span_[ch].resize(keepN[ch]);  // resize up preserved the old samples
+    }
+  }
+  hasR_ = spanN_[1] > 0 && spanStart_[0] == spanStart_[1];
+  stereo_ = hasR_ && chanMode_ >= 2;
+
+  // Span indices shifted back by the extra depth: keep the same absolute
+  // view window on screen (no visual jump on the click).
+  if (spanN_[prim_] > keepN[prim_])
+    viewStart_ += static_cast<int>(spanN_[prim_] - keepN[prim_]);
+
+  // Trigger reference lives in old span coordinates: drop it.
+  prevVs_ = -1;
+  trigBuf_.clear();
+
+  // Markers: re-read deep so anchor dots cover the whole frozen record.
+  // Reader clamps to cap - 64 internally, so ring size is the ceiling;
+  // refresh() shrinks the vector back to 8192 on the next live frame.
+  marks_.resize(16384);
+  markN_ = proc_.readMarkerSpan(marks_.data(), marks_.size());
+  marks_.resize(markN_);
+
+  // Ghost input: same 1:1 alignment as refresh() (start = spanStart - W),
+  // just deeper. Short/failed read disables the ghost rather than misaligns.
+  const uint64_t W = proc_.getLatencySamples();
+  for (int ch = 0; ch < 2; ++ch) {
+    if (channelActive(ch) && W > 0 && spanStart_[ch] >= W && spanN_[ch] > 0) {
+      inSpan_[ch].resize(spanN_[ch]);
+      const size_t g = proc_.readInputSpanAt(inSpan_[ch].data(), spanN_[ch],
+                                             spanStart_[ch] - W, ch);
+      inN_[ch] = (g == spanN_[ch]) ? g : 0;
+      if (inN_[ch] == 0)
+        inSpan_[ch].resize(0);
+    } else {
+      inN_[ch] = 0;
+      inSpan_[ch].resize(0);
+    }
+  }
 }
 
 void ScopeView::refresh() {
   viewLen_ = lenFromH(hZoom_.getValue());
   vZoomGain_ = static_cast<float>(std::pow(2.0, vZoom_.getValue()));
+
+  if (freeze_) {
+    const int held = static_cast<int>(spanN_[prim_]);
+    viewLen_ = std::min(viewLen_, std::min(held, freezeRight_));
+    viewStart_ = freezeRight_ - viewLen_;  // правый край неподвижен в записи
+    hZoom_.setValue(hFromLen(viewLen_), juce::dontSendNotification);
+    const float scale = traceRect().getHeight() * 0.45f * vZoomGain_;
+    for (int ch = 0; ch < 2; ++ch) {
+      if (!channelActive(ch) || spanN_[ch] == 0) {
+        trailN_[ch] = 0;
+        continue;
+      }
+      buildPaths(ch, laneRect(ch), scale, true);
+    }
+    updateSmChip();
+    pushUiState();
+    return;
+  }
+
   const size_t want = static_cast<size_t>(viewLen_) * 2 + 4096;
   const uint64_t W = static_cast<uint64_t>(proc_.getLatencySamples());
 
@@ -317,7 +420,7 @@ void ScopeView::refresh() {
   if (tracking) {
     const int t = findTrigger(span_[prim_].data(), spanN_[prim_]);
     if (t >= 0) {
-      vs = t - viewLen_ * 15 / 100;  // pre-trigger 15%
+      vs = t - static_cast<int>(viewLen_ * kPreTriggerFrac);  // pre-trigger 15%
       if (vs < 0)
         vs = 0;
       locked_ = true;
@@ -372,7 +475,7 @@ int ScopeView::findTrigger(const float* s, size_t n) const {
   if (peak < 1.0e-4f)
     return -1;                      // silence / DC: nothing to lock onto
   const float gate = 0.05f * peak;  // schmitt hysteresis vs noise
-  const int pre = viewLen_ * 15 / 100;
+  const int pre = static_cast<int>(viewLen_ * kPreTriggerFrac);
   const int limit = static_cast<int>(n);
   bool high = false;
   int best = -1;  // newest LOW->HIGH whose whole view still fits the span
@@ -402,7 +505,7 @@ int ScopeView::findTriggerAligned(const float* s,
   if (peak < 1.0e-4f)
     return -1;
   const float gate = 0.05f * peak;
-  const int pre = viewLen_ * 15 / 100;
+  const int pre = static_cast<int>(viewLen_ * kPreTriggerFrac);
   const int lo = std::max(0, center - radius);
   const int hi = std::min(limit - viewLen_, center + radius);
   bool high = false;
@@ -536,7 +639,13 @@ void ScopeView::buildPaths(int ch,
   inPath_[ch] = in;
   outPath_[ch] = out;
 
-  if (trackBtn_.getToggleState() && locked_) {
+  if (freeze_) {
+    // Simply redraw the main track into the freeze area without shifting the
+    // phosphor trail.
+    trail_[ch][0] = out;
+    if (trailN_[ch] == 0)
+      trailN_[ch] = 1;
+  } else if (trackBtn_.getToggleState() && locked_) {
     trail_[ch][0] = out;  // triggered: frames overlay, no trail
     trailN_[ch] = 1;
   } else {
@@ -687,9 +796,12 @@ void ScopeView::paint(juce::Graphics& g) {
           mk.pos >= viewAbs + static_cast<uint64_t>(viewLen_))
         continue;
       const int p = static_cast<int>(mk.pos - viewAbs);
+      const int idx = viewStart_ + p;
+      if (idx < 0 || idx >= static_cast<int>(spanN_[ch]))
+        continue;
+      const float v = span_[ch][static_cast<size_t>(idx)];
       const float x = r.getX() + (static_cast<float>(p) + 0.5f) * r.getWidth() /
                                      static_cast<float>(viewLen_);
-      const float v = span_[ch][static_cast<size_t>(viewStart_ + p)];
       const float y = cy - v * scale;
       g.setColour(mk.kind == 0 ? ui::markOf(ch) : ui::markFall);
       g.fillEllipse(x - ui::dotR, y - ui::dotR, ui::dotR * 2.0f,
