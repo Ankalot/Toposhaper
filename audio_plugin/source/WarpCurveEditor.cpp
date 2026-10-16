@@ -15,10 +15,10 @@ constexpr float kGridW = 1.0f;   // chalk stroke for the half grid
 const auto kEraserZone = juce::Rectangle<int>(283, 230, 47, 18);
 
 // Widget-private geometry (not shared design tokens)
-constexpr float kPointR = 5.0f;
-constexpr float kPointRHot = 6.5f;
-constexpr float kHandleR = 4.0f;
-constexpr float kHandleRHot = 5.5f;
+constexpr float kPointR = 4.5f;
+constexpr float kPointRHot = 6.0f;
+constexpr float kHandleR = 3.5f;
+constexpr float kHandleRHot = 5.0f;
 
 constexpr float kSnapStep = 0.05f;  // Alt-snap grid; includes drawn quarters
 float snapped(float v) {
@@ -125,11 +125,6 @@ void WarpCurveEditor::paint(juce::Graphics& g) {
     const float rad = hot ? kHandleRHot : kHandleR;
     g.setColour(ui::accentR);
     g.fillEllipse(q.x - rad, q.y - rad, rad * 2.0f, rad * 2.0f);
-    if (hot) {  // chalk ring around the grabbed handle
-      g.setColour(ui::chalk);
-      g.drawEllipse(q.x - rad - 2.0f, q.y - rad - 2.0f, rad * 2.0f + 4.0f,
-                    rad * 2.0f + 4.0f, 1.5f);
-    }
   }
   // Interior points: plain white chalk dots
   for (int i = 1; i < curve_.numPoints() - 1; ++i) {
