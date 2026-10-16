@@ -64,7 +64,7 @@ TEST(WarpCurve, AddPointRejectsWhenCapacityExhausted) {
   WarpCurve c;
   c.reset();
   int added = 0;
-  while (added < 128) {
+  while (added < 128) {  // added < kHistoryDepth from PluginProcessor
     int best = -1;
     float bestW = 0.0f;
     for (int s = 0; s < c.numSegments(); ++s) {

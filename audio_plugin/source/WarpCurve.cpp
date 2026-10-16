@@ -87,19 +87,24 @@ bool WarpCurve::moveHandle(int s, float qx, float qy) {
   return true;
 }
 
-int WarpCurve::addPoint(float x) {
-  if (numPoints() >= kMaxPoints)
-    return -1;
+int WarpCurve::segmentContaining(float x) const {
   const float cx = juce::jlimit(kEps, 1.0f - kEps, x);
-  int s = -1;
   for (int i = 0; i < numSegments(); ++i)
     if (cx > pts_[static_cast<size_t>(i)].x + kEps &&
-        cx < pts_[static_cast<size_t>(i) + 1].x - kEps) {
-      s = i;
-      break;
-    }
-  if (s < 0)
-    return -1;
+        cx < pts_[static_cast<size_t>(i) + 1].x - kEps)
+      return i;
+  return -1;
+}
+
+bool WarpCurve::canAddPoint(float x) const {
+  return numPoints() < kMaxPoints && segmentContaining(x) >= 0;
+}
+
+int WarpCurve::addPoint(float x) {
+  if (!canAddPoint(x))
+    return -1;  // single guard: can* and the mutator cannot drift apart
+  const int s = segmentContaining(x);
+  const float cx = juce::jlimit(kEps, 1.0f - kEps, x);
   // Exact de Casteljau split: curve shape preserved, new point on the curve
   const Seg seg = segment(s);
   const float tau = solveTau(seg, cx);
@@ -112,8 +117,12 @@ int WarpCurve::addPoint(float x) {
   return s + 1;
 }
 
+bool WarpCurve::canRemovePoint(int i) const {
+  return i > 0 && i < numPoints() - 1 && numPoints() > 2;
+}
+
 bool WarpCurve::removePoint(int i) {
-  if (i <= 0 || i >= numPoints() - 1 || numPoints() <= 2)
+  if (!canRemovePoint(i))
     return false;
   const Node p0 = pts_[static_cast<size_t>(i) - 1];
   const Node m = pts_[static_cast<size_t>(i)];

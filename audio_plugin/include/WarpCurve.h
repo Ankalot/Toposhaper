@@ -41,6 +41,8 @@ public:
 
   bool movePoint(int i, float x, float y);
   bool moveHandle(int s, float qx, float qy);  // q = desired on-curve position
+  bool canAddPoint(float x) const;  // true iff addPoint(x) would succeed
+  bool canRemovePoint(int i) const;
   int addPoint(float x);    // exact de Casteljau split at x, y snapped to curve
   bool removePoint(int i);  // merges segments, refit through removed point
 
@@ -54,7 +56,8 @@ private:
   Seg segment(int s) const;
   static Node bezier(const Seg& s, float tau);
   static float solveTau(const Seg& s, float x);
-  void clampAll();  // enforce invariants after bulk load
+  void clampAll();                       // enforce invariants after bulk load
+  int segmentContaining(float x) const;  // shared by canAddPoint and addPoint
 
   bool monotonicLock_ = true;
   float clampCy(int s, float y) const;  // segment box (lock) or unit square

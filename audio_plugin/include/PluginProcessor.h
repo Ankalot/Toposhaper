@@ -10,9 +10,11 @@ struct ScopeMarker {
   int ch = 0;        // 0 = L, 1 = R
 };
 
-class PluginProcessor : public juce::AudioProcessor {
+class PluginProcessor : public juce::AudioProcessor,
+                        private juce::AudioProcessorParameter::Listener {
 public:
   PluginProcessor();
+  ~PluginProcessor() override;
 
   void prepareToPlay(double sampleRate, int samplesPerBlock) override;
   void releaseResources() override;
@@ -75,6 +77,17 @@ public:
   };
   UiState& uiState() { return uiState_; }
   const UiState& uiState() const { return uiState_; }
+
+  // ---- In-plugin undo/redo over the persisted state ----------------------
+  // Covers exactly what buildStateTree(false) serialises: params, warp
+  // curve, preset identity/dirty. View-only UiState is outside by design.
+  juce::ValueTree snapshotState() { return buildStateTree(false); }
+  void pushUndo();                         // capture NOW as an undo point
+  void pushUndoTree(juce::ValueTree pre);  // push a pre-captured snapshot
+  bool undo();
+  bool redo();
+  bool canUndo() const { return !undoStack_.empty(); }
+  bool canRedo() const { return !redoStack_.empty(); }
 
 private:
   // Windowing constants
@@ -200,6 +213,15 @@ private:
   std::vector<int> order_;       // size = kWindowSize
   std::vector<int> parent_;      // size = kWindowSize
   std::vector<uint8_t> active_;  // size = kWindowSize
+
+  static constexpr size_t kHistoryDepth = 128;
+  void restoreSnapshot(juce::ValueTree t);
+  std::vector<juce::ValueTree> undoStack_, redoStack_;
+  // juce::AudioProcessorParameter::Listener: flask drags arrive as
+  // gestures; gesture begin = one undo point per drag, not per pixel.
+  void parameterValueChanged(int parameterIndex, float newValue) override;
+  void parameterGestureChanged(int parameterIndex,
+                               bool gestureIsStarting) override;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginProcessor)
 };

@@ -55,6 +55,8 @@ bool WarpCurveEditor::isIdentity() const {
 void WarpCurveEditor::resetToIdentity() {
   if (isIdentity())
     return;  // nothing to wipe: don't touch state, don't raise the star
+  if (onUndoPoint)
+    onUndoPoint();
   while (curve_.numPoints() > 2)
     curve_.removePoint(curve_.numPoints() - 2);
   curve_.movePoint(0, 0.0f, 0.0f);
@@ -221,6 +223,8 @@ void WarpCurveEditor::timerCallback() {
 
 void WarpCurveEditor::mouseDown(const juce::MouseEvent& e) {
   const auto hit = hitTestCurve(e.position);
+  if (hit.kind != Kind::none && onUndoPoint)
+    onUndoPoint();  // drag of an existing point/handle = one undo point
   grab_ = hit.kind;
   grabIndex_ = hit.index;
   if (hit.kind == Kind::point) {
@@ -270,15 +274,23 @@ void WarpCurveEditor::mouseMove(const juce::MouseEvent& e) {
 void WarpCurveEditor::mouseDoubleClick(const juce::MouseEvent& e) {
   const auto hit = hitTestCurve(e.position);
   if (hit.kind == Kind::point) {  // double-click on a point removes it
-    if (curve_.removePoint(hit.index))
-      notify();
+    if (!curve_.canRemovePoint(hit.index))
+      return;
+    if (onUndoPoint)
+      onUndoPoint();
+    curve_.removePoint(hit.index);
+    notify();
     return;
   }
   auto pos = fromUI(e.position);
   if (e.mods.isAltDown())
     pos.x = snapped(pos.x);
-  if (curveRect().contains(e.position) && curve_.addPoint(pos.x) >= 0)
-    notify();
+  if (!curveRect().contains(e.position) || !curve_.canAddPoint(pos.x))
+    return;
+  if (onUndoPoint)
+    onUndoPoint();
+  curve_.addPoint(pos.x);
+  notify();
 }
 
 void WarpCurveEditor::mouseExit(const juce::MouseEvent&) {

@@ -94,10 +94,22 @@ public:
   void paint(juce::Graphics& g) override;
   bool hitTest(int x, int y) override;
 
+  // Flask owns its mouse math, so the Slider's drag lifecycle never runs
+  // and its gesture hooks are dead. The editor wires these: press/release
+  // open a real parameter gesture (host touch + undo push via the
+  // processor's parameter listener), wheel bursts push undo directly.
+  std::function<void()> onGestureBegin, onGestureEnd, onUndoPoint;
+
 private:
   void mouseDown(const juce::MouseEvent& e) override;
   void mouseDrag(const juce::MouseEvent& e) override;
+  void mouseUp(const juce::MouseEvent& e) override;
+  void mouseWheelMove(const juce::MouseEvent&,
+                      const juce::MouseWheelDetails&) override;
   void pour(int yLocal);
+
+  bool pressed_ = false;            // a press gesture is open
+  juce::uint32 lastWheelPush_ = 0;  // wheel-burst coalescing window
 
   juce::Path outline_;  // glass silhouette in local coords (hit area)
   juce::Image glass_;
@@ -179,6 +191,8 @@ class PluginEditor : public juce::AudioProcessorEditor,
 public:
   explicit PluginEditor(PluginProcessor&);
   ~PluginEditor() override;
+
+  bool keyPressed(const juce::KeyPress&) override;
 
   void paint(juce::Graphics&) override;
   void resized() override;

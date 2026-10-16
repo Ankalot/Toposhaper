@@ -162,11 +162,13 @@ std::vector<PresetMenu::PresetRef> PresetMenu::collect() const {
 void PresetMenu::apply(const juce::String& xml,
                        const juce::String& name,
                        const juce::String& source) {
+  auto pre = proc_.snapshotState();
   applying_ = true;
   const bool ok = proc_.applyStateXml(xml);
   if (ok) {
     proc_.setPresetIdentity(name, source);
     proc_.setPresetDirty(false);
+    proc_.pushUndoTree(std::move(pre));
   } else if (onSay) {
     onSay(name + " is not a Toposhaper preset - nothing was loaded.");
   }

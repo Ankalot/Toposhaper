@@ -110,6 +110,7 @@ OsPanel::OsPanel(PluginProcessor& p) : proc_(p) {
 
 void OsPanel::engage(int idx) {
   // Mutual-exclusive toggles: clicking the engaged switch drops to OFF
+  proc_.pushUndo();
   const int choice = (idx == active_) ? 0 : idx + 1;  // 0 = OFF
   auto* p = proc_.parameters().getParameter("os_factor");
   p->setValueNotifyingHost(static_cast<float>(choice) / 3.0f);  // 4 ids
@@ -193,16 +194,39 @@ bool Flask::hitTest(int x, int y) {
 }
 
 void Flask::mouseDown(const juce::MouseEvent& e) {
-  // Alt latches precision mode for the whole gesture: the surface does
-  // NOT jump to the cursor, the cursor becomes a knob turning from the
-  // pressed value. Latched at press so the mode cannot flip mid-drag.
   fine_ = e.mods.isAltDown();
+  pressed_ = true;
+  if (onGestureBegin)
+    onGestureBegin();  // BEFORE any pour: the undo snapshot taken inside
+                       // parameterGestureChanged must be the pre-press state
   if (fine_) {
     fineStart_ = juce::jlimit(0.0f, 1.0f, static_cast<float>(getValue()));
     fineStartY_ = e.y;
   } else {
     pour(e.y);
   }
+}
+
+void Flask::mouseUp(const juce::MouseEvent&) {
+  if (pressed_) {
+    pressed_ = false;
+    if (onGestureEnd)
+      onGestureEnd();  // host touch latch releases here
+  }
+}
+
+void Flask::mouseWheelMove(const juce::MouseEvent& e,
+                           const juce::MouseWheelDetails& w) {
+  // Wheel pours bypass the press path: one undo point per burst, not per
+  // notch; inside a drag the press gesture already covers everything.
+  if (!pressed_) {
+    const auto now = juce::Time::getMillisecondCounter();
+    if (now - lastWheelPush_ > 600 && onUndoPoint) {
+      onUndoPoint();
+      lastWheelPush_ = now;
+    }
+  }
+  juce::Slider::mouseWheelMove(e, w);  // base does the actual pouring
 }
 
 void Flask::mouseDrag(const juce::MouseEvent& e) {
@@ -342,6 +366,7 @@ SmoothTag::SmoothTag(PluginProcessor& p) : proc_(p) {
 void SmoothTag::engage(int mode) {
   if (mode == mode_)
     return;  // radio pair: the engaged option stays engaged
+  proc_.pushUndo();
   auto* p = proc_.parameters().getParameter("smooth_mode");
   p->setValueNotifyingHost(static_cast<float>(mode));  // 0 = SG, 1 = PAVA
   sync();
@@ -411,6 +436,7 @@ FoldSwitch::FoldSwitch(PluginProcessor& p, std::function<void()> onDirty)
 void FoldSwitch::engage(bool folding) {
   if (folding == folding_)
     return;  // radio pair: the circled answer stays circled
+  proc_.pushUndo();
   proc_.warp().setMonotonicLock(!folding);  // Y = fold => lock off
   proc_.warpEdited();                       // rebake LUT on the audio thread
   if (onDirty_)
@@ -472,6 +498,7 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   addAndMakeVisible(smoothFlask);
 
   warpEditor.setReadoutFont(customLF.caveatPt(20.0f));  // handwritten chalk
+  warpEditor.onUndoPoint = [this] { processorRef.pushUndo(); };
   addAndMakeVisible(warpEditor);
 
   addAndMakeVisible(foldSwitch);
@@ -493,6 +520,18 @@ PluginEditor::PluginEditor(PluginProcessor& p)
                                                  "threshold", threshFlask);
   smoothAtt = std::make_unique<SliderAttachment>(processorRef.parameters(),
                                                  "smooth_mix", smoothFlask);
+
+  auto wireFlaskGestures = [this](Flask& f, const char* id) {
+    auto* p = processorRef.parameters().getParameter(id);
+    f.onGestureBegin = [p] {
+      p->beginChangeGesture();
+    };  // listener pushes undo
+    f.onGestureEnd = [p] { p->endChangeGesture(); };
+    f.onUndoPoint = [this] { processorRef.pushUndo(); };  // wheel bursts only
+  };
+  wireFlaskGestures(driveFlask, "drive");
+  wireFlaskGestures(threshFlask, "threshold");
+  wireFlaskGestures(smoothFlask, "smooth_mix");
 
   bgImage = juce::ImageCache::getFromMemory(BinaryData::background_png,
                                             BinaryData::background_pngSize);
@@ -524,6 +563,26 @@ PluginEditor::~PluginEditor() {
 
 void PluginEditor::parameterChanged(const juce::String&, float) {
   presetMenu.markModified();
+}
+
+bool PluginEditor::keyPressed(const juce::KeyPress& key) {
+  const auto mods = key.getModifiers();
+  if ((mods.isCtrlDown() || mods.isCommandDown()) && !mods.isAltDown()) {
+    const auto code = juce::CharacterFunctions::toUpperCase(
+        (juce::juce_wchar)key.getKeyCode());
+    if (code == 'Z') {
+      if (mods.isShiftDown())
+        processorRef.redo();
+      else
+        processorRef.undo();
+      return true;  // consumed: host must not double-undo behind our back
+    }
+    if (code == 'Y') {
+      processorRef.redo();
+      return true;
+    }
+  }
+  return juce::AudioProcessorEditor::keyPressed(key);
 }
 
 void PluginEditor::say(const juce::String& text, juce::uint32 ms) {

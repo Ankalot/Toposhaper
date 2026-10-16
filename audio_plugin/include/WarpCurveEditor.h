@@ -25,6 +25,7 @@ public:
   void mouseDoubleClick(const juce::MouseEvent&) override;
   void mouseExit(const juce::MouseEvent&) override;
   juce::String getTooltip() override;  // voice only inside the unit square
+  std::function<void()> onUndoPoint;   // editor wires: processor pushUndo
 
 private:
   enum class Kind { none, point, handle };

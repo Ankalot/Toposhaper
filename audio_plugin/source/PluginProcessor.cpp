@@ -19,6 +19,17 @@ PluginProcessor::PluginProcessor()
   osPtr = apvts.getRawParameterValue("os_factor");
   smoothModePtr = apvts.getRawParameterValue("smooth_mode");
   warpSlot_.publish(warpCurve_);
+  // Per-parameter registration: there is no processor-wide hook for
+  // parameter gestures, each AudioProcessorParameter owns its listeners.
+  for (auto* p : getParameters())
+    p->addListener(this);
+}
+
+PluginProcessor::~PluginProcessor() {
+  // Before apvts (and its parameters) die: no dangling raw pointers
+  // in parameter listener lists.
+  for (auto* p : getParameters())
+    p->removeListener(this);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -797,6 +808,8 @@ void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
   if (xml == nullptr)
     return;
   applyStateTree(juce::ValueTree::fromXml(*xml));
+  undoStack_.clear();  // host-driven state (project load, host undo)
+  redoStack_.clear();  // invalidates our history: snapshots no longer apply
 }
 
 bool PluginProcessor::applyStateXml(const juce::String& xmlText) {
@@ -821,6 +834,68 @@ juce::File PluginProcessor::userPresetDirectory() {
           .getChildFile("Presets");
   dir.createDirectory();
   return dir;
+}
+
+void PluginProcessor::parameterValueChanged(int, float) {
+  // Value changes are observed elsewhere (editor's APVTS listener for the
+  // dirty flag); the undo stack only cares about gesture boundaries.
+}
+
+void PluginProcessor::parameterGestureChanged(int, bool gestureIsStarting) {
+  if (!gestureIsStarting)
+    return;
+  // SliderAttachment gestures come from the message thread; host
+  // automation can gesture from anywhere else. The undo stack is
+  // message-thread state (ValueTrees, vectors) - ignore foreign threads.
+  if (juce::MessageManager::existsAndIsCurrentThread())
+    pushUndo();
+}
+
+void PluginProcessor::pushUndo() {
+  pushUndoTree(buildStateTree(false));
+}
+
+void PluginProcessor::pushUndoTree(juce::ValueTree pre) {
+  undoStack_.push_back(std::move(pre));
+  if (undoStack_.size() > kHistoryDepth)
+    undoStack_.erase(undoStack_.begin());
+  redoStack_.clear();  // new branch of history kills the old future
+}
+
+bool PluginProcessor::undo() {
+  if (undoStack_.empty())
+    return false;
+  redoStack_.push_back(buildStateTree(false));
+  if (redoStack_.size() > kHistoryDepth)
+    redoStack_.erase(redoStack_.begin());
+  restoreSnapshot(std::move(undoStack_.back()));
+  undoStack_.pop_back();
+  return true;
+}
+
+bool PluginProcessor::redo() {
+  if (redoStack_.empty())
+    return false;
+  undoStack_.push_back(buildStateTree(false));
+  if (undoStack_.size() > kHistoryDepth)
+    undoStack_.erase(undoStack_.begin());
+  restoreSnapshot(std::move(redoStack_.back()));
+  redoStack_.pop_back();
+  return true;
+}
+
+void PluginProcessor::restoreSnapshot(juce::ValueTree t) {
+  std::vector<float> before;
+  before.reserve(static_cast<size_t>(getParameters().size()));
+  for (auto* p : getParameters())
+    before.push_back(p->getValue());
+  applyStateTree(std::move(t));  // warp + meta + replaceState; no UI child
+  size_t i = 0;
+  for (auto* p : getParameters()) {
+    const float v = p->getValue();
+    if (std::abs(v - before[i++]) > 1.0e-6f)
+      p->setValueNotifyingHost(v);  // keep host UI/automation honest
+  }
 }
 }  // namespace audio_plugin
 
