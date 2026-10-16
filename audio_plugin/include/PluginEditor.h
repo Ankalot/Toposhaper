@@ -123,7 +123,7 @@ private:
   // Alt-precision gesture, latched at press: relative pour from the pressed
   // value instead of jump-to-cursor, kFineDiv times finer than 1:1.
   bool fine_ = false;
-  float fineDiv_ = 5.0f;    // Alt: four times finer than 1:1
+  float fineDiv_ = 5.0f;    // Alt: fineDiv_ times finer than 1:1
   float fineStart_ = 0.0f;  // value at press
   int fineStartY_ = 0;      // local y at press
 };

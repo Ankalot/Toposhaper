@@ -180,7 +180,7 @@ private:
   private:
     bool dragged_ = false;
   };
-  ToggleKnob trackBtn_{"TRACK: LOCK"};
+  ToggleKnob trackBtn_;
 
   // Four-detent groove switch
   class ModeSwitch : public juce::TextButton {

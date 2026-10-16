@@ -10,8 +10,7 @@ constexpr float kCurveW = 2.6f;  // chalk stroke for the curve
 constexpr float kGridW = 1.0f;   // chalk stroke for the half grid
 
 // Invisible hit rectangle over the eraser sprite painted on the board art
-// (component-local px). PLACEHOLDER numbers: line them up with the actual
-// eraser in the art — the debug rect at the bottom of paint() shows the box.
+// (component-local px).
 const auto kEraserZone = juce::Rectangle<int>(283, 230, 47, 18);
 
 // Widget-private geometry (not shared design tokens)

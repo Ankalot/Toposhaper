@@ -324,7 +324,7 @@ static void median3(float* x, int n) {
   for (int i = 1; i < n - 1; ++i) {
     const float b = x[i], c = x[i + 1];
     const float m = std::max(std::min(a, b), std::min(std::max(a, b), c));
-    a = b;  // оригинальное значение едет в следующее окно
+    a = b;  // the original value rolls into the next window
     x[i] = m;
   }
 }
@@ -382,8 +382,6 @@ size_t PluginProcessor::readScopeSpan(float* dst,
                                       int ch) const {
   const auto& ring = (ch == 1) ? scopeRingR_ : scopeRing_;
   const auto& cur = (ch == 1) ? scopeWriteR_ : scopeWrite_;
-  constexpr size_t kMaxSpan =
-      (static_cast<size_t>(1) << kScopeBits) - kScopeMargin;
   if (n > kMaxSpan)
     n = kMaxSpan;
   const uint64_t w = cur.load(std::memory_order_acquire);
@@ -408,8 +406,7 @@ size_t PluginProcessor::readInputSpanAt(float* dst,
   if (w < static_cast<uint64_t>(kScopeMargin) + n)
     return 0;
   const uint64_t avail = w - kScopeMargin;
-  if (startAbs + n > avail ||
-      n > (static_cast<size_t>(1) << kScopeBits) - kScopeMargin)
+  if (startAbs + n > avail || n > kMaxSpan)
     return 0;
   for (size_t i = 0; i < n; ++i)
     dst[i] = ring[static_cast<size_t>((startAbs + i) & kScopeMask)];
@@ -492,11 +489,12 @@ void PluginProcessor::deformSection(const float* window,
   const int mode = smoothMode();
   const bool smooth =
       mode == 0 && smoothMix > 0.0f && (b - a) >= 2 * kSmoothHalf;
-  const bool pava = mode == 1 && smoothMix > 0.0f && (b - a) >= 2;
-  // PAVA: Monotonize the section interior once, prior to warping. Do not touch
-  // the anchors. (seams are click-free); clamp the interior to [min(va, vb),
-  // max(va, vb)] — clamping a monotonic sequence preserves monotonicity and
-  // respects the anchors.
+  // PAVA: monotonize the section interior once, prior to warping. The SG
+  // branch above wins when both are requested by a stale parameter combo.
+  // Do not touch the anchors (seams stay click-free); clamp the interior to
+  // [min(va, vb), max(va, vb)] - clamping a monotone sequence preserves
+  // monotonicity and respects the anchors.
+  const bool pava = mode == 1 && !smooth && smoothMix > 0.0f && (b - a) >= 2;
   if (pava) {
     const int L = b - a - 1;
     pava_.resize(static_cast<size_t>(L));

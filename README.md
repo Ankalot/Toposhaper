@@ -11,7 +11,7 @@ curve while the anchors stay pinned.
 - Deformation curve editor
 - Extrema threshold: keep fine detail or demote noise to texture
 - Section smoothing: Savitzky-Golay denoise or PAVA isotonic monotonization
-- Oversampling OFF / X2 / X4
+- Oversampling OFF / X2 / X4 / X8
 - Built-in scope: triggered or scrolling view, ghost input trace, anchor
   markers, L / R / L+R / L|R channel modes
 

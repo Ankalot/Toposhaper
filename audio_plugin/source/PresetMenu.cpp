@@ -43,29 +43,25 @@ void PresetMenu::paint(juce::Graphics& g) {
     g.setColour(ui::black);
     // Preset name in the printed teal window: centred when it fits,
     // car-radio marquee (hold, then seamless left loop) when it does not.
-    if (!dispName_.isEmpty()) {
-      const auto win = nameBtn_.getBounds().toFloat();
-      g.saveState();
-      g.reduceClipRegion(nameBtn_.getBounds());
-      if (!scrolling_) {
-        g.drawText(dispName_, win.toNearestInt(), juce::Justification::centred,
-                   false);
-      } else {
-        const float off = marqueeOffset();
-        const float x1 = win.getX() + kWinPad - off;
-        const float x2 = x1 + textW_ + kGapPx;  // second copy, seamless loop
-        auto line = [&](float x) {
-          return juce::Rectangle<int>(
-              juce::roundToInt(x), juce::roundToInt(win.getTopLeft().getY()),
-              juce::roundToInt(textW_) + 2, juce::roundToInt(win.getHeight()));
-        };
-        g.drawText(dispName_, line(x1), juce::Justification::centredLeft,
-                   false);
-        g.drawText(dispName_, line(x2), juce::Justification::centredLeft,
-                   false);
-      }
-      g.restoreState();
+    const auto win = nameBtn_.getBounds().toFloat();
+    g.saveState();
+    g.reduceClipRegion(nameBtn_.getBounds());
+    if (!scrolling_) {
+      g.drawText(dispName_, win.toNearestInt(), juce::Justification::centred,
+                 false);
+    } else {
+      const float off = marqueeOffset();
+      const float x1 = win.getX() + kWinPad - off;
+      const float x2 = x1 + textW_ + kGapPx;  // second copy, seamless loop
+      auto line = [&](float x) {
+        return juce::Rectangle<int>(
+            juce::roundToInt(x), juce::roundToInt(win.getTopLeft().getY()),
+            juce::roundToInt(textW_) + 2, juce::roundToInt(win.getHeight()));
+      };
+      g.drawText(dispName_, line(x1), juce::Justification::centredLeft, false);
+      g.drawText(dispName_, line(x2), juce::Justification::centredLeft, false);
     }
+    g.restoreState();
   }
   // Hover/press dimming over the printed arrow pills: a translucent
   // black path darkens exactly the printed pixels underneath. Only the

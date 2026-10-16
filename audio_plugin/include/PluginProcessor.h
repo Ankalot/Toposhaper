@@ -157,6 +157,9 @@ private:
   static constexpr size_t kScopeMask =
       (static_cast<size_t>(1) << kScopeBits) - 1;
   static constexpr size_t kScopeMargin = 2048;
+  // Largest span a reader may copy: the ring minus the in-flight margin.
+  static constexpr size_t kMaxSpan =
+      (static_cast<size_t>(1) << kScopeBits) - kScopeMargin;
   std::array<float, static_cast<size_t>(1) << kScopeBits> scopeRing_{};
   std::array<float, static_cast<size_t>(1) << kScopeBits> scopeRingR_{};
   std::array<float, static_cast<size_t>(1) << kScopeBits> inputRing_{};

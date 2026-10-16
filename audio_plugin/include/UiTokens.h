@@ -39,7 +39,7 @@ inline const juce::Colour fillL{0x1f4f7dff};    // delta fill / under-curve fill
 inline const juce::Colour fillR{0x1fffb454};    // R delta fill
 inline const juce::Colour ghost{0x38e8ecf5};    // raw-input ghost trace
 
-// --- Markers & statuss------------------------------------------------------
+// --- Markers & status ------------------------------------------------------
 inline const juce::Colour markL{0xff5aa2ff};     // L kept-extremum dots
 inline const juce::Colour markR{0xffffc078};     // R kept-extremum dots
 inline const juce::Colour markFall{0xffe5484d};  // fallback seam dots

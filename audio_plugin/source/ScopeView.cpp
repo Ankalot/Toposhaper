@@ -295,9 +295,7 @@ void ScopeView::freezeCapture() {
   size_t got[2] = {0, 0};
   uint64_t st[2] = {0, 0};
 
-  // Deep read of the output history. A failed read (ring younger than the
-  // request, e.g. right after start / sample-rate change) leaves that
-  // channel's shallow capture untouched.
+  // Deep read of the output history.
   for (int ch = 0; ch < 2; ++ch) {
     span_[ch].resize(kFreezeDepth);
     got[ch] = proc_.readScopeSpan(span_[ch].data(), kFreezeDepth, st[ch], ch);
@@ -353,7 +351,7 @@ void ScopeView::refresh() {
   if (freeze_) {
     const int held = static_cast<int>(spanN_[prim_]);
     viewLen_ = std::min(viewLen_, std::min(held, freezeRight_));
-    viewStart_ = freezeRight_ - viewLen_;  // правый край неподвижен в записи
+    viewStart_ = freezeRight_ - viewLen_;  // right edge is fixed recording
     hZoom_.setValue(hFromLen(viewLen_), juce::dontSendNotification);
     const float scale = traceRect().getHeight() * 0.45f * vZoomGain_;
     for (int ch = 0; ch < 2; ++ch) {

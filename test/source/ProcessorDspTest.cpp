@@ -137,7 +137,7 @@ TEST(Processor, SilenceAndDcPassUnchanged) {
   PluginProcessor p;
   p.prepareToPlay(kSr, kBlock);
   const int L = p.getLatencySamples();
-  {  // тишина
+  {  // silence
     const std::vector<float> in(static_cast<size_t>(L) + 2048, 0.0f);
     const auto out = runBlocks(p, in);
     for (size_t i = static_cast<size_t>(L); i < in.size(); ++i)
