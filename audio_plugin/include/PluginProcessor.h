@@ -178,7 +178,7 @@ private:
   bool windowSilent_ =
       false;         // last analysis window was degenerate (silence/DC)
   UiState uiState_;  // view recall mirror: editor writes, state serializes
-  juce::String presetName_{"Init"}, presetSource_{"init"};
+  juce::String presetName_{"Init"}, presetSource_{"Basic"};
   bool presetDirty_ =
       false;  // '*' flag: state differs from applied/saved preset
 

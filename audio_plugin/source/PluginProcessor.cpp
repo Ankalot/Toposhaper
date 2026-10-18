@@ -789,12 +789,12 @@ bool PluginProcessor::applyStateTree(juce::ValueTree tree) {
   auto meta = tree.getChildWithName("PRESET");
   if (meta.isValid()) {
     presetName_ = meta.getProperty("name", "Init").toString();
-    presetSource_ = meta.getProperty("source", "init").toString();
+    presetSource_ = meta.getProperty("source", "Basic").toString();
     presetDirty_ = static_cast<bool>(meta.getProperty("dirty", false));
     tree.removeChild(meta, nullptr);
   } else {
     presetName_ = "Init";  // old sessions / preset blobs: no identity
-    presetSource_ = "init";
+    presetSource_ = "Basic";
     presetDirty_ = false;
   }
   apvts.replaceState(tree);
