@@ -540,8 +540,7 @@ void PluginProcessor::deformSection(const float* window,
     }
     osS_[static_cast<size_t>(L) + 1] = osS_[static_cast<size_t>(L)];  // pad
     const auto warped = [&](float v) {
-      // Clipping! Theoretically this will never clip because of topology.
-      const float t = juce::jlimit(0.0f, 1.0f, (v - va) / span);
+      const float t = (v - va) / span;
       return va + ((1.0f - drive) * t + drive * warpEval(t)) * span;
     };
     const size_t M = static_cast<size_t>(L) * static_cast<size_t>(osF) + 1;
@@ -582,8 +581,6 @@ void PluginProcessor::deformSection(const float* window,
       x += smoothMix * (acc - x);  // lerp(raw, smoothed, mix)
     }
     float t = (x - va) / span;
-    // Clipping! Theoretically this will never clip because of topology.
-    t = juce::jlimit(0.0f, 1.0f, t);
     const float shaped = warpEval(t);
     const float mixed = (1.0f - drive) * t + drive * shaped;
     out[i - outOffset] = va + mixed * span;
