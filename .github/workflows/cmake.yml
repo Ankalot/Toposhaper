@@ -22,18 +22,6 @@ jobs:
         with:
           submodules: recursive
 
-      # Extract version from CMakeLists.txt (works on all platforms)
-      - name: Get version from CMakeLists
-        id: get_version
-        shell: bash
-        run: |
-          VERSION=$(grep -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          if [ -z "$VERSION" ]; then
-            VERSION="1.0.0"  # fallback if not found
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
-
       # macOS: pick a known-good Xcode so JUCE compiles cleanly
       - name: List Xcode installations
         if: matrix.os == 'macos-15'
@@ -163,32 +151,32 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         run: ctest -C ${{ matrix.build_type }} --output-on-failure || true
 
-      # VST3 bundle with version in filename
+      # VST3 bundle
       - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Toposhaper-v${{ steps.get_version.outputs.version }}-${{ matrix.os == 'macos-15' && 'macOS-universal' || matrix.os == 'windows-latest' && 'windows' || 'linux_x86_64' }}-VST3
+          name: Toposhaper-${{ matrix.os == 'macos-15' && 'macOS-universal' || matrix.os == 'windows-latest' && 'windows' || 'linux_x86_64' }}-VST3
           path: |
             build/**/VST3/*.vst3/**
           if-no-files-found: error
 
-      # Standalone with version in filename
+      # Standalone
       - name: Upload Standalone artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Toposhaper-v${{ steps.get_version.outputs.version }}-${{ matrix.os == 'macos-15' && 'macOS-universal' || matrix.os == 'windows-latest' && 'windows' || 'linux_x86_64' }}-Standalone
+          name: Toposhaper-${{ matrix.os == 'macos-15' && 'macOS-universal' || matrix.os == 'windows-latest' && 'windows' || 'linux_x86_64' }}-Standalone
           path: |
             build/**/Standalone/*.exe
             build/**/Standalone/*.app/**
             build/**/Standalone/Toposhaper
           if-no-files-found: error
 
-      # AU component with version in filename (macOS only)
+      # AU component (macOS only)
       - name: Upload AU artifact
         if: matrix.os == 'macos-15'
         uses: actions/upload-artifact@v4
         with:
-          name: Toposhaper-v${{ steps.get_version.outputs.version }}-macOS-universal-AU
+          name: Toposhaper-macOS-universal-AU
           path: |
             build/**/AU/*.component/**
           if-no-files-found: error
